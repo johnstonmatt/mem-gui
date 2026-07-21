@@ -25,23 +25,33 @@ html, body {
 #breadcrumb {
   flex: 1;
   display: flex;
+  align-items: center;
   gap: 6px;
   overflow: hidden;
   white-space: nowrap;
 }
 
-#breadcrumb span {
+.breadcrumb-sep {
+  color: #45484e;
+}
+
+.breadcrumb-link {
   cursor: pointer;
   color: #9aa0a6;
-}
-
-#breadcrumb span:last-child {
-  color: #e6e6e6;
-  cursor: default;
-}
-
-#breadcrumb span:not(:last-child):hover {
   text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: color 0.1s ease, text-decoration-color 0.1s ease;
+}
+
+.breadcrumb-link:hover {
+  color: #c7cad0;
+  text-decoration-color: #6b7076;
+}
+
+.breadcrumb-active {
+  color: #e6e6e6;
+  font-weight: 600;
+  cursor: default;
 }
 
 #legend {

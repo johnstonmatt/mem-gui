@@ -220,13 +220,28 @@ function renderDomainZoom(domain) {
 
 function setBreadcrumb(crumbs) {
   breadcrumbEl.innerHTML = "";
-  crumbs.forEach((c) => {
+  crumbs.forEach((c, i) => {
+    const isActive = i === crumbs.length - 1;
+
+    if (i > 0) {
+      const sep = document.createElement("span");
+      sep.className = "breadcrumb-sep";
+      sep.textContent = "›";
+      breadcrumbEl.appendChild(sep);
+    }
+
     const span = document.createElement("span");
     span.textContent = c.label;
-    span.addEventListener("click", () => {
-      if (c.domain) zoomToDomain(c.domain);
-      else showOverview();
-    });
+    span.className = isActive ? "breadcrumb-active" : "breadcrumb-link";
+    // The active crumb reflects the current view — it isn't a link to
+    // itself, so it gets no click handler at all, not just different
+    // styling (a no-op click was confusing before this cleanup).
+    if (!isActive) {
+      span.addEventListener("click", () => {
+        if (c.domain) zoomToDomain(c.domain);
+        else showOverview();
+      });
+    }
     breadcrumbEl.appendChild(span);
   });
 }
@@ -249,11 +264,23 @@ function render() {
     setBreadcrumb([{ label: "All domains", domain: null }]);
     return;
   }
+  // state.domains is replaced wholesale on every mutation/rescan (delete,
+  // hoist, refresh), so a zoomed view's cached domain object goes stale — it
+  // still lists the file we just deleted. Re-point it to the fresh object
+  // (matched by domain id), or fall back to the overview if that domain is
+  // gone entirely (e.g. its last memory was deleted).
   if (state.view.mode === "domain") {
-    renderDomainZoom(state.view.domain);
-  } else {
-    renderOverview();
+    const fresh = state.domains.find(
+      (d) => d.domain === (state.view.domain && state.view.domain.domain),
+    );
+    if (fresh) {
+      state.view.domain = fresh;
+      renderDomainZoom(fresh);
+      return;
+    }
+    state.view = { mode: "overview", domain: null };
   }
+  renderOverview();
 }
 
 // --- detail panel -----------------------------------------------------------
