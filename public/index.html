@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Mem GUI</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header id="topbar">
+    <nav id="breadcrumb"><span data-domain="">All domains</span></nav>
+    <div id="legend">
+      <span class="legend-label">recency</span>
+      <span id="legend-gradient"></span>
+      <span class="legend-label">old</span>
+      <span id="legend-swatch-low" class="legend-swatch"></span>
+      <span id="legend-swatch-high" class="legend-swatch"></span>
+      <span class="legend-label">new</span>
+    </div>
+    <button id="refresh-btn" title="Rescan memory store">⟳</button>
+  </header>
+
+  <main id="treemap"></main>
+
+  <div id="empty-state" class="hidden">
+    No memory files found under <code>~/.claude/projects/*/memory/</code>.
+  </div>
+
+  <aside id="detail" class="hidden">
+    <button id="close-detail" aria-label="Close">×</button>
+    <div id="detail-domain" class="detail-domain"></div>
+    <h2 id="detail-name"></h2>
+    <div id="detail-meta"></div>
+    <pre id="detail-content"></pre>
+    <div id="detail-actions">
+      <button id="reveal-btn">Reveal in Finder</button>
+      <button id="open-btn">Open</button>
+      <button id="integrate-btn">Integrate into repo</button>
+      <button id="hoist-btn">Hoist to ~/dev</button>
+      <button id="delete-btn" class="danger">Delete</button>
+    </div>
+
+    <div id="action-status">
+      <span id="action-spinner" class="spinner hidden"></span>
+      <span id="action-status-text"></span>
+    </div>
+
+    <div id="integrate-panel" class="hidden">
+      <div id="integrate-proposal-target"></div>
+      <div id="integrate-proposal-summary"></div>
+      <pre id="integrate-proposal-content"></pre>
+      <p id="integrate-proposal-note">
+        Writing only touches the file above. Once it's written, you'll be
+        asked whether to delete the original memory too.
+      </p>
+      <div id="integrate-proposal-actions">
+        <button id="integrate-apply-btn">Write to file</button>
+        <button id="integrate-discard-btn">Discard</button>
+      </div>
+    </div>
+  </aside>
+
+  <script type="module" src="/treemap.js"></script>
+</body>
+</html>

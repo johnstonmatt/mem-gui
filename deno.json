@@ -1,0 +1,18 @@
+{
+  "tasks": {
+    "dev": "deno desktop --hmr --allow-read=$HOME/.claude/projects,$HOME/dev --allow-write=$HOME/.claude/projects,$HOME/dev --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS --allow-net=127.0.0.1 main.ts",
+    "build:mac": "deno desktop --output dist/MemGui.app --allow-read=$HOME/.claude/projects,$HOME/dev --allow-write=$HOME/.claude/projects,$HOME/dev --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS --allow-net=127.0.0.1 main.ts"
+  },
+  "desktop": {
+    "app": {
+      "name": "Mem GUI",
+      "identifier": "dev.johnstonmatt.mem-gui"
+    }
+  },
+  "compilerOptions": {
+    "lib": ["deno.window", "deno.desktop"]
+  },
+  "imports": {
+    "@std/path": "jsr:@std/path@^1"
+  }
+}
