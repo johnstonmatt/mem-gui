@@ -1,0 +1,92 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#eaf6fb"/>
+      <stop offset="100%" stop-color="#cdeaf5"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0.1" y1="0.1" x2="0.9" y2="0.9">
+      <stop offset="0%" stop-color="#ffd166"/>
+      <stop offset="45%" stop-color="#ff9a3c"/>
+      <stop offset="100%" stop-color="#f2542d"/>
+    </linearGradient>
+    <linearGradient id="fin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffb347" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#f2542d" stop-opacity="0.85"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.35" cy="0.28" r="0.7">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="60%" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- macOS squircle background, inset to match the standard icon grid -->
+  <rect x="100" y="100" width="824" height="824" rx="183" ry="183" fill="url(#bg)"/>
+
+  <!-- gentle water ripple lines -->
+  <g stroke="#ffffff" stroke-opacity="0.5" stroke-width="9" fill="none" stroke-linecap="round">
+    <path d="M130 760 Q 210 744 280 760 T 430 758"/>
+    <path d="M700 240 Q 770 224 850 240"/>
+  </g>
+
+  <!-- goldfish, swimming up and to the right -->
+  <g transform="translate(599 477) rotate(-20) scale(1.7)">
+    <!-- tail fin (trailing left) -->
+    <path d="M -125 0
+             C -190 -70, -210 -30, -235 -78
+             C -205 -8, -205 8, -235 78
+             C -210 30, -190 70, -125 0 Z"
+          fill="url(#fin)"/>
+
+    <!-- dorsal fin -->
+    <path d="M -25 -68
+             C -5 -108, 35 -112, 65 -95
+             C 30 -85, 5 -78, -12 -55 Z"
+          fill="url(#fin)"/>
+
+    <!-- pectoral fin (underside) -->
+    <path d="M 5 30
+             C 0 68, -35 88, -68 92
+             C -38 68, -32 50, -30 28
+             C -18 24, -6 26, 5 30 Z"
+          fill="url(#fin)" fill-opacity="0.9"/>
+
+    <!-- body -->
+    <path d="M -128 0
+             C -128 -58, -55 -100, 45 -92
+             C 118 -86, 150 -35, 150 0
+             C 150 35, 118 86, 45 92
+             C -55 100, -128 58, -128 0 Z"
+          fill="url(#body)"/>
+
+    <!-- scale accents -->
+    <g stroke="#e8722c" stroke-opacity="0.45" stroke-width="4" fill="none" stroke-linecap="round">
+      <path d="M -58 -26 Q -46 -18 -58 -10"/>
+      <path d="M -30 -37 Q -18 -29 -30 -21"/>
+      <path d="M -58 16 Q -46 24 -58 32"/>
+      <path d="M -30 27 Q -18 35 -30 43"/>
+    </g>
+
+    <!-- mouth -->
+    <path d="M 143 -4 C 151 -2 151 2 143 4" fill="none" stroke="#c8461f" stroke-width="3.5" stroke-linecap="round"/>
+
+    <!-- eye -->
+    <circle cx="108" cy="-30" r="11" fill="#2b2b2b"/>
+    <circle cx="112" cy="-34" r="4" fill="#ffffff"/>
+
+    <!-- sheen overlay on body -->
+    <path d="M -128 0
+             C -128 -58, -55 -100, 45 -92
+             C 118 -86, 150 -35, 150 0
+             C 150 35, 118 86, 45 92
+             C -55 100, -128 58, -128 0 Z"
+          fill="url(#sheen)"/>
+  </g>
+
+  <!-- small bubbles, drifting ahead of the nose -->
+  <g fill="#ffffff" fill-opacity="0.6">
+    <circle cx="868" cy="350" r="13"/>
+    <circle cx="893" cy="305" r="8"/>
+    <circle cx="908" cy="268" r="5"/>
+  </g>
+</svg>

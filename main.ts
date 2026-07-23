@@ -91,6 +91,8 @@ const win = new Deno.BrowserWindow({
   title: "Mem GUI",
   width: 1280,
   height: 860,
+  x: 0,
+  y: 0,
 });
 
 // win.bind()'s generic signature expects loosely-typed JSON args/return

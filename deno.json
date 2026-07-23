@@ -6,7 +6,10 @@
   "desktop": {
     "app": {
       "name": "Mem GUI",
-      "identifier": "dev.johnstonmatt.mem-gui"
+      "identifier": "dev.johnstonmatt.mem-gui",
+      "icons": {
+        "macos": "./assets/icon.icns"
+      }
     }
   },
   "compilerOptions": {
