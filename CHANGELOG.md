@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/johnstonmatt/mem-gui/compare/v0.1.0...v0.1.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **release:** re-seal the app bundle after deno desktop signs it ([#7](https://github.com/johnstonmatt/mem-gui/issues/7)) ([f713bd2](https://github.com/johnstonmatt/mem-gui/commit/f713bd240e9fda8867a72036a4e3110944f738ea))
+
 ## 0.1.0 (2026-08-05)
 
 
