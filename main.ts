@@ -97,6 +97,16 @@ const win = new Deno.BrowserWindow({
   y: 0,
 });
 
+// The red close button only dispatches "close" — `deno desktop` has no default
+// close behaviour, so without a listener the button is inert. Closing the
+// window alone isn't enough either: Deno.serve() below holds the event loop
+// open, so the process would outlive its only window with no way to quit it
+// short of Activity Monitor. One window means closing it is quitting.
+win.addEventListener("close", () => {
+  win.close();
+  Deno.exit(0);
+});
+
 // win.bind()'s generic signature expects loosely-typed JSON args/return
 // values; our handlers work with concrete shapes (string paths, Domain[]),
 // so each handler is cast at the bind() boundary where they're plain JSON
