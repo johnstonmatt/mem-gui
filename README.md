@@ -76,10 +76,10 @@ A few things worth knowing about that file:
 - **A missing or malformed file is not an error.** Anything unparseable falls
   back to defaults silently, so hand-editing it can't lock you out of the app —
   worst case a bad edit is ignored.
-- **Claude Code does not read it.** It sits in `~/.claude` only so the app's
-  write permission can stay scoped to a single tree (see _Permissions_ below).
-  Claude Code loads its config by specific filename — `settings.json`,
-  `CLAUDE.md`, `keybindings.json` — and memory recall only walks
+- **Claude Code does not read it.** It sits in `~/.claude` only so everything
+  the app writes stays inside a single tree (see _Permissions_ below). Claude
+  Code loads its config by specific filename — `settings.json`, `CLAUDE.md`,
+  `keybindings.json` — and memory recall only walks
   `~/.claude/projects/*/memory/*.md`, so `mem-gui.json` is inert to it.
 
 Note that `~` expands to your home directory, whose memory store Claude Code
@@ -161,7 +161,8 @@ the experimental `deno desktop` runtime.
 
 ## Permissions
 
-The app runs with a deliberately narrow permission set (see `deno.jsonc`):
+`deno task dev` runs with a deliberately narrow permission set (see
+`deno.jsonc`):
 
 | Scope | Grant                | Why                                                                          |
 | ----- | -------------------- | ---------------------------------------------------------------------------- |
@@ -170,12 +171,24 @@ The app runs with a deliberately narrow permission set (see `deno.jsonc`):
 | Run   | `open`, `claude`     | reveal/open files, and the read-only integrate proposal                      |
 | Net   | `127.0.0.1`          | serve the local page to the webview                                          |
 
-Read is broad because a move destination can be any directory and has to be
-verified before use; **write is not** — apart from `~/.claude/mem-gui.json`,
-nothing outside `~/.claude/projects/*/memory/` is ever touched by a move, and
-path guards in `main.ts` and `src/migrate.ts` enforce it at the boundary.
-(_Integrate_ is the one flow that writes into a repo, which is why `~/dev` is
-also writable; point that grant elsewhere if your projects live somewhere else.)
+**The built app can't scope the filesystem grants that way, and doesn't pretend
+to.** Deno bakes permission paths into the binary at build time, with `$HOME`
+expanded as it does so, so a release built on CI would ship permitted to read
+the runner's home and nobody else's — v0.1.1 shipped exactly that and opened to
+an empty window on every machine but the build machine. There is no
+runtime-resolved form: `--allow-read=~/x` is stored literally and never
+expanded, granting nothing. So `build:mac` uses unscoped `--allow-read` and
+`--allow-write`, and keeps the narrow `--allow-run` / `--allow-env` /
+`--allow-net` grants, which don't depend on paths.
+
+That costs less than it sounds, because the path scoping was never the control:
+**`main.ts` and `src/migrate.ts` gate every filesystem action on the path living
+inside the managed memory store**, and that's what actually holds. Apart from
+`~/.claude/mem-gui.json`, nothing outside `~/.claude/projects/*/memory/` is
+touched by a move, a collision is refused rather than overwritten, and
+_integrate_ — the one flow that writes into a repo — only ever writes the single
+Markdown file you approve in the proposal. Move and hoist accept any directory
+on disk by design, so no compile-time path set could have described them anyway.
 
 ## Project layout
 
