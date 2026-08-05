@@ -24,6 +24,11 @@ jobs:
   # version. Here deno.jsonc's "version" is the only one, updated via the
   # generic updater and its x-release-please-version annotation. Nothing
   # about the build is Go-specific.
+  #
+  # bump-minor-pre-major keeps a breaking change below 1.0 at 0.x → 0.(x+1)
+  # instead of release-please's default, which would read a single `feat!:` as
+  # "ship 1.0.0" and make a stable-API promise by accident. Going to 1.0 should
+  # be deliberate: put `Release-As: 1.0.0` in a commit footer when it's time.
   release-please:
     runs-on: ubuntu-latest
     permissions:
