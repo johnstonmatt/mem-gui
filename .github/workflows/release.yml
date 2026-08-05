@@ -29,6 +29,12 @@ jobs:
   # instead of release-please's default, which would read a single `feat!:` as
   # "ship 1.0.0" and make a stable-API promise by accident. Going to 1.0 should
   # be deliberate: put `Release-As: 1.0.0` in a commit footer when it's time.
+  #
+  # initial-version matters only for the very first release, and it is not
+  # redundant with the above: with no git tag to bump from, release-please skips
+  # the versioning strategy entirely and returns initialReleaseVersion(), which
+  # defaults to 1.0.0. Without this the first release would ship as 1.0.0 no
+  # matter what the commits or the manifest say.
   release-please:
     runs-on: ubuntu-latest
     permissions:
