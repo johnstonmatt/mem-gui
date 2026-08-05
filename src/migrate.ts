@@ -1,9 +1,22 @@
+import { domainForProjectDir, resolveProjectDir } from "./paths.ts";
+
 export interface MigratableMemory {
   path: string;
   filename: string;
   name: string;
   description: string;
 }
+
+/**
+ * Where a move sends a memory. Two ways to name the same thing, because both
+ * are exact in one direction only: an already-scanned domain is identified by
+ * the id the store is literally keyed by (reversing that id back to a real path
+ * is lossy — see scanner.ts), while a directory the user names is turned into
+ * an id by the exact forward escaping (see domainForProjectDir).
+ */
+export type MoveDestination =
+  | { kind: "domain"; domain: string }
+  | { kind: "dir"; dir: string };
 
 export interface IntegrationProposal {
   targetFile: string;
@@ -164,35 +177,63 @@ export async function writeIntegration(
 }
 
 /**
- * "Hoist" is fully deterministic — no LLM involved, no arbitrary write
- * target. It relocates a memory file as-is into ~/dev's own memory store (a
- * real, pre-existing Claude Code project domain — the same
- * ~/.claude/projects/<domain>/memory/ convention every project already
- * uses), so it applies at the broader root rather than one narrow project.
- * Refuses outright if a same-named file already exists at the destination,
- * rather than silently overwriting it — collision is the only failure mode,
- * and it's caught before anything is touched.
+ * Resolves a destination to the exact domain id its memory store is keyed by,
+ * plus a human-facing label for messages. Both kinds are validated against
+ * something that already exists on disk: a domain must already be a project in
+ * the store, a directory must already be a real directory — so a typo fails
+ * here rather than minting a bogus domain nothing will ever look at again.
  */
-export async function writeHoistedMemory(
+async function resolveDestination(
+  dest: MoveDestination,
+): Promise<{ destDomain: string; destLabel: string }> {
+  const home = Deno.env.get("HOME") ?? "";
+
+  if (dest.kind === "domain") {
+    if (
+      !dest.domain || dest.domain.includes("/") || dest.domain.includes("..")
+    ) {
+      throw new Error(`Invalid destination domain: "${dest.domain}"`);
+    }
+    if (!await pathExists(`${home}/.claude/projects/${dest.domain}`)) {
+      throw new Error(`No such project domain: ${dest.domain}`);
+    }
+    return { destDomain: dest.domain, destLabel: dest.domain };
+  }
+
+  const projectDir = await resolveProjectDir(dest.dir);
+  return {
+    destDomain: domainForProjectDir(projectDir),
+    destLabel: projectDir,
+  };
+}
+
+/**
+ * "Move" is fully deterministic — no LLM involved, no arbitrary write target.
+ * It relocates a memory file as-is into another project's memory store, always
+ * at the same ~/.claude/projects/<domain>/memory/ path every project already
+ * uses, so the destination is only ever *which* store, never an arbitrary
+ * filesystem location. Hoisting is just this with the destination defaulted to
+ * a broad root (see settings.ts), so the memory applies across projects rather
+ * than one narrow repo. Refuses outright if a same-named file already exists at
+ * the destination, rather than silently overwriting it — collision is the only
+ * failure mode, and it's caught before anything is touched.
+ */
+export async function writeMovedMemory(
   memory: MigratableMemory,
   sourceDomain: string,
-): Promise<{ writtenPath: string; destDomain: string }> {
+  dest: MoveDestination,
+): Promise<{ writtenPath: string; destDomain: string; destLabel: string }> {
   if (memory.filename === "MEMORY.md") {
     throw new Error(
-      `Refusing to hoist the index file itself (${memory.filename}).`,
+      `Refusing to move the index file itself (${memory.filename}).`,
     );
   }
 
   const home = Deno.env.get("HOME") ?? "";
-  const rootPath = `${home}/dev`;
-  // Claude Code names project memory dirs after the escaped absolute cwd
-  // (e.g. "/Users/m/dev" -> "-Users-m-dev"). Unlike reversing this mapping
-  // (lossy — see scanner.ts), going forward from a known real path is exact:
-  // every "/" becomes "-", deterministically.
-  const destDomain = rootPath.replace(/\//g, "-");
+  const { destDomain, destLabel } = await resolveDestination(dest);
 
   if (sourceDomain === destDomain) {
-    throw new Error(`This memory is already in the ~/dev root store.`);
+    throw new Error(`This memory already lives in ${destLabel}.`);
   }
 
   const destDir = `${home}/.claude/projects/${destDomain}/memory`;
@@ -200,20 +241,20 @@ export async function writeHoistedMemory(
 
   if (await pathExists(destPath)) {
     throw new Error(
-      `A memory named "${memory.filename}" already exists in the ~/dev store — rename one of them first.`,
+      `A memory named "${memory.filename}" already exists in ${destLabel} — rename one of them first.`,
     );
   }
 
   const rawContent = await Deno.readTextFile(memory.path);
   // Traceability aid for reversibility: records where this came from, right
-  // in the file, so "undo" is just "read hoistedFrom and move it back."
+  // in the file, so "undo" is just "read movedFrom and move it back."
   const content = rawContent.replace(
     /^(metadata:[ \t]*\r?\n)/m,
-    `$1  hoistedFrom: ${sourceDomain}\n`,
+    `$1  movedFrom: ${sourceDomain}\n`,
   );
 
   await Deno.mkdir(destDir, { recursive: true });
   await Deno.writeTextFile(destPath, content);
 
-  return { writtenPath: destPath, destDomain };
+  return { writtenPath: destPath, destDomain, destLabel };
 }

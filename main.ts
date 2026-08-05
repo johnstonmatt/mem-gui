@@ -1,10 +1,12 @@
 import { scanDomains } from "./src/scanner.ts";
 import {
   type MigratableMemory,
+  type MoveDestination,
   proposeIntegration,
-  writeHoistedMemory,
   writeIntegration,
+  writeMovedMemory,
 } from "./src/migrate.ts";
+import { readSettings, type Settings, writeSettings } from "./src/settings.ts";
 // Static assets are pulled in as text modules (stable since Deno 2.8) so
 // `deno desktop` embeds them in the module graph like any other import —
 // reading them via Deno.readFile at runtime doesn't work, since the
@@ -137,18 +139,24 @@ win.bind("applyIntegration", ((
   content: string,
 ) => writeIntegration(repoRoot, targetFile, content)) as never);
 
-// "Hoist": fully deterministic move to ~/dev's own memory store — no LLM,
-// no arbitrary write target. Touches 4 files (new memory + its index, old
-// memory + its index), but all 4 are within the same already-safe
-// ~/.claude/projects scope, none of them overwrite unrelated content
-// (collision on the new file is refused outright, index edits are simple
-// append/line-removal), so this is one coherent, reversible operation
+// "Move": fully deterministic relocation into another project's memory store
+// — no LLM, no arbitrary write target. The destination only ever selects
+// *which* store (see resolveDestination in migrate.ts); the write path is
+// always ~/.claude/projects/<domain>/memory/. Touches 4 files (new memory +
+// its index, old memory + its index), but all 4 are within the same
+// already-safe ~/.claude/projects scope, none of them overwrite unrelated
+// content (collision on the new file is refused outright, index edits are
+// simple append/line-removal), so this is one coherent, reversible operation
 // rather than the kind of unpredictable multi-file fan-out we ruled out
 // for LLM-directed writes (see feedback_scope_destructive_actions memory).
-win.bind("hoistMemory", ((memory: MigratableMemory, sourceDomain: string) => {
+win.bind("moveMemory", ((
+  memory: MigratableMemory,
+  sourceDomain: string,
+  dest: MoveDestination,
+) => {
   assertManagedPath(memory.path);
   return (async () => {
-    const result = await writeHoistedMemory(memory, sourceDomain);
+    const result = await writeMovedMemory(memory, sourceDomain, dest);
     const destDir = result.writtenPath.slice(
       0,
       result.writtenPath.lastIndexOf("/"),
@@ -159,6 +167,17 @@ win.bind("hoistMemory", ((memory: MigratableMemory, sourceDomain: string) => {
     return { ...result, domains: await scanDomains() };
   })();
 }) as never);
+
+// Settings are read on load (to label the one-click hoist button with its
+// current target) and written only when the user saves. writeSettings
+// validates the directory before persisting, so a bad value surfaces here
+// rather than on every later hoist.
+win.bind("getSettings", (() => readSettings()) as never);
+
+win.bind(
+  "saveSettings",
+  ((patch: Partial<Settings>) => writeSettings(patch)) as never,
+);
 
 Deno.serve((req) => {
   const path = new URL(req.url).pathname;

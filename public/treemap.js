@@ -10,6 +10,9 @@ const state = {
   maxMtime: 1,
   view: { mode: "overview", domain: null },
   activeFile: null,
+  // Mirrors the backend defaults in src/settings.ts so the UI still renders
+  // sensibly if the settings read fails.
+  settings: { defaultHoistDir: "~/dev" },
 };
 
 // --- squarified treemap layout -------------------------------------------
@@ -330,25 +333,31 @@ document.getElementById("delete-btn").addEventListener("click", async () => {
   await deleteMemory(file);
 });
 
-// --- integrate into repo / hoist to ~/dev -------------------------------------
-// Two distinct, purpose-built actions instead of one generic "pick any
-// target" flow:
+// --- integrate into repo / move between stores --------------------------------
+// Purpose-built actions rather than one generic "pick any target" flow:
 //  - Integrate: assumes the memory's own project repo, no picking needed. A
 //    read-only `claude` sub-process (see src/migrate.ts) proposes the single
 //    best doc to fold it into; nothing writes until you review and confirm.
 //    Reversible via the repo's own git history.
-//  - Hoist: fully deterministic, no LLM — moves the memory as-is into ~/dev's
-//    own memory store (a real, pre-existing project domain), so it applies
-//    at the broader root instead of one narrow project. Refuses outright on
-//    a filename collision rather than overwriting.
-// Neither one auto-deletes as a side effect of writing; hoist's deletion of
-// the original is its own explicit, confirmed step, not folded into a write.
+//  - Move to…: fully deterministic, no LLM — relocates the memory as-is into
+//    another project's memory store, picked from the domains already scanned or
+//    named as a directory. Refuses outright on a filename collision rather
+//    than overwriting.
+//  - Hoist: the same move with the destination pre-set to the configured
+//    default hoist directory (a broad root, so the memory applies across
+//    projects instead of one) — one click, no picking.
+// Neither one auto-deletes as a side effect of writing; a move's deletion of
+// the original is part of the move the user confirmed, not a hidden extra.
 
 const actionStatusEl = document.getElementById("action-status");
 const actionSpinnerEl = document.getElementById("action-spinner");
 const actionStatusTextEl = document.getElementById("action-status-text");
 const integrateBtn = document.getElementById("integrate-btn");
 const hoistBtn = document.getElementById("hoist-btn");
+const moveBtn = document.getElementById("move-btn");
+const movePanel = document.getElementById("move-panel");
+const moveDestEl = document.getElementById("move-dest");
+const moveDestDirEl = document.getElementById("move-dest-dir");
 const integratePanel = document.getElementById("integrate-panel");
 const integrateProposalTargetEl = document.getElementById(
   "integrate-proposal-target",
@@ -372,6 +381,7 @@ function setActionStatus(text, { spinning = false } = {}) {
 function resetMigratePanel() {
   setActionStatus("");
   integratePanel.classList.add("hidden");
+  movePanel.classList.add("hidden");
   integrateProposal = null;
 }
 
@@ -450,20 +460,22 @@ integrateDiscardBtn.addEventListener("click", () => {
   setActionStatus("");
 });
 
-hoistBtn.addEventListener("click", async () => {
-  const file = state.activeFile;
-  if (!file) return;
+/**
+ * The one write path for both Hoist and Move to… — `dest` is the only thing
+ * that differs between them (see MoveDestination in src/migrate.ts).
+ */
+async function moveMemory(file, dest, destLabel) {
   if (
     !confirm(
-      `Hoist "${file.name}" up to ~/dev's memory store? It'll be removed from ${file.domainLabel} and moved there instead.`,
+      `Move "${file.name}" to ${destLabel}'s memory store? It'll be removed from ${file.domainLabel}.`,
     )
   ) {
     return;
   }
 
-  setActionStatus("Hoisting…", { spinning: true });
+  setActionStatus(`Moving to ${destLabel}…`, { spinning: true });
   try {
-    const result = await bindings.hoistMemory(
+    const result = await bindings.moveMemory(
       {
         path: file.path,
         filename: file.filename,
@@ -471,14 +483,170 @@ hoistBtn.addEventListener("click", async () => {
         description: file.description,
       },
       file.domain,
+      dest,
     );
     state.domains = result.domains;
     computeMinMax();
     detailEl.classList.add("hidden");
     state.activeFile = null;
+    resetMigratePanel();
     render();
   } catch (err) {
-    setActionStatus(`Failed to hoist: ${err}`);
+    setActionStatus(`Failed to move: ${err}`);
+  }
+}
+
+hoistBtn.addEventListener("click", () => {
+  const file = state.activeFile;
+  if (!file) return;
+  const dir = state.settings.defaultHoistDir;
+  moveMemory(file, { kind: "dir", dir }, dir);
+});
+
+const MOVE_DEST_CUSTOM = "custom";
+
+/**
+ * Existing domains are offered by their domain id, not their displayed path:
+ * the id is what the store is keyed by, and for a domain with no session
+ * transcript the label is only a lossy guess at the real path (see
+ * scanner.ts) — round-tripping through it could name a different store.
+ */
+function populateMoveDest(file) {
+  moveDestEl.innerHTML = "";
+
+  const hoistDir = state.settings.defaultHoistDir;
+  const defaultOption = document.createElement("option");
+  defaultOption.value = `dir:${hoistDir}`;
+  defaultOption.textContent = `${hoistDir} (default hoist)`;
+  moveDestEl.appendChild(defaultOption);
+
+  for (const domain of state.domains) {
+    if (domain.domain === file.domain) continue;
+    const option = document.createElement("option");
+    option.value = `domain:${domain.domain}`;
+    option.textContent = domain.domainLabel;
+    moveDestEl.appendChild(option);
+  }
+
+  const custom = document.createElement("option");
+  custom.value = MOVE_DEST_CUSTOM;
+  custom.textContent = "Other directory…";
+  moveDestEl.appendChild(custom);
+
+  moveDestEl.selectedIndex = 0;
+  moveDestDirEl.value = "";
+  moveDestDirEl.classList.add("hidden");
+}
+
+moveDestEl.addEventListener("change", () => {
+  const isCustom = moveDestEl.value === MOVE_DEST_CUSTOM;
+  moveDestDirEl.classList.toggle("hidden", !isCustom);
+  if (isCustom) moveDestDirEl.focus();
+});
+
+moveBtn.addEventListener("click", () => {
+  const file = state.activeFile;
+  if (!file) return;
+  resetMigratePanel();
+  populateMoveDest(file);
+  movePanel.classList.remove("hidden");
+});
+
+document.getElementById("move-cancel-btn").addEventListener("click", () => {
+  movePanel.classList.add("hidden");
+  setActionStatus("");
+});
+
+document.getElementById("move-confirm-btn").addEventListener("click", () => {
+  const file = state.activeFile;
+  if (!file) return;
+
+  const value = moveDestEl.value;
+  if (value === MOVE_DEST_CUSTOM) {
+    const dir = moveDestDirEl.value.trim();
+    if (!dir) {
+      setActionStatus("Enter a directory to move this memory to.");
+      return;
+    }
+    moveMemory(file, { kind: "dir", dir }, dir);
+    return;
+  }
+
+  const [kind, ...rest] = value.split(":");
+  const target = rest.join(":");
+  if (kind === "dir") {
+    moveMemory(file, { kind: "dir", dir: target }, target);
+  } else {
+    const label = moveDestEl.selectedOptions[0].textContent;
+    moveMemory(file, { kind: "domain", domain: target }, label);
+  }
+});
+
+// --- settings ----------------------------------------------------------------
+
+const settingsOverlay = document.getElementById("settings-overlay");
+const settingsHoistDirEl = document.getElementById("settings-hoist-dir");
+const settingsStatusEl = document.getElementById("settings-status");
+
+function setSettingsStatus(text, { error = false } = {}) {
+  settingsStatusEl.textContent = text;
+  settingsStatusEl.classList.toggle("error", error);
+}
+
+/** The hoist button names its target, so the setting is visible where it acts. */
+function applySettings() {
+  const dir = state.settings.defaultHoistDir;
+  hoistBtn.textContent = `Hoist to ${dir}`;
+  hoistBtn.title = `Move this memory into ${dir}'s memory store`;
+}
+
+function openSettings() {
+  settingsHoistDirEl.value = state.settings.defaultHoistDir;
+  setSettingsStatus("");
+  settingsOverlay.classList.remove("hidden");
+  settingsHoistDirEl.focus();
+}
+
+function closeSettings() {
+  settingsOverlay.classList.add("hidden");
+}
+
+document.getElementById("settings-btn").addEventListener("click", openSettings);
+document.getElementById("settings-cancel-btn").addEventListener(
+  "click",
+  closeSettings,
+);
+
+// Clicking the backdrop dismisses, but clicks inside the dialog must not — they
+// bubble up to the overlay too.
+settingsOverlay.addEventListener("click", (e) => {
+  if (e.target === settingsOverlay) closeSettings();
+});
+
+document.getElementById("settings-save-btn").addEventListener(
+  "click",
+  async () => {
+    const dir = settingsHoistDirEl.value.trim();
+    if (!dir) {
+      setSettingsStatus("Enter a directory.", { error: true });
+      return;
+    }
+    setSettingsStatus("Saving…");
+    try {
+      // The backend validates the directory exists before persisting, so a
+      // typo is caught here rather than on every later hoist.
+      state.settings = await bindings.saveSettings({ defaultHoistDir: dir });
+      applySettings();
+      closeSettings();
+    } catch (err) {
+      setSettingsStatus(`${err}`, { error: true });
+    }
+  },
+);
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !settingsOverlay.classList.contains("hidden")) {
+    closeSettings();
   }
 });
 
@@ -490,6 +658,32 @@ function computeMinMax() {
   state.maxMtime = allMtimes.length ? Math.max(...allMtimes) : 1;
 }
 
+/**
+ * The window navigates to the local server the moment its listener comes up,
+ * and under --hmr the page can reload before the re-evaluated module has
+ * re-registered its handlers — either way a call on load can land before the
+ * Deno side is listening for it, which surfaces as "No callback bound for: X".
+ * That window is milliseconds wide and closes on its own, so retry briefly
+ * rather than leaving the window stuck on an error the user can only fix by
+ * hitting refresh. Any *other* error is a real failure and propagates at once.
+ */
+async function callBinding(name, ...args) {
+  const DEADLINE_MS = 3000;
+  const RETRY_MS = 100;
+  let lastErr;
+
+  for (let waited = 0; waited <= DEADLINE_MS; waited += RETRY_MS) {
+    try {
+      return await bindings[name](...args);
+    } catch (err) {
+      if (!`${err}`.includes("No callback bound")) throw err;
+      lastErr = err;
+      await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+    }
+  }
+  throw lastErr;
+}
+
 async function load() {
   if (typeof bindings === "undefined") {
     emptyStateEl.textContent =
@@ -497,8 +691,19 @@ async function load() {
     emptyStateEl.classList.remove("hidden");
     return;
   }
+
+  // Settings only decide button labels and the default move target, and
+  // state.settings already holds usable defaults — so a failure here must not
+  // take the treemap down with it.
   try {
-    state.domains = await bindings.getTree();
+    state.settings = await callBinding("getSettings");
+  } catch (err) {
+    console.error("Failed to read settings, falling back to defaults:", err);
+  }
+  applySettings();
+
+  try {
+    state.domains = await callBinding("getTree");
     computeMinMax();
     render();
   } catch (err) {

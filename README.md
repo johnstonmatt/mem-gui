@@ -27,7 +27,8 @@ that matter:
 - **Which memories are costing me the most tokens?** → the largest tiles.
 - **What have I not looked at in months?** → the coolest, bluest tiles.
 - **Is this note really project-specific, or should it apply everywhere?** →
-  open it and *hoist* it up to your `~/dev` root.
+  open it and *hoist* it up to a broader root, or *move* it to whichever
+  project it actually belongs to.
 - **Should this live in the repo's docs instead of a private memory?** → let
   Claude *integrate* it into the right file.
 
@@ -45,12 +46,29 @@ that matter:
   under `docs/`, etc.). Nothing is written until you review the proposal and
   confirm; the write lands in one Markdown file, reversible via the repo's git
   history.
-- **Hoist to `~/dev`** — deterministically relocate a memory as-is into your
-  `~/dev` root store, so it applies across every project instead of one. No LLM,
-  no arbitrary write target; refuses on a filename collision rather than
-  overwriting.
+- **Move to…** — deterministically relocate a memory as-is into any other
+  project's memory store: pick one of the domains already in the treemap, or
+  name any directory on disk. No LLM, no arbitrary write target — the
+  destination only selects *which* store, and the write always lands at
+  `~/.claude/projects/<domain>/memory/`. Both ends' `MEMORY.md` indexes are kept
+  in sync, and a filename collision is refused rather than overwritten.
+- **Hoist** — the same move in one click, with the destination pre-set to your
+  **default hoist directory** (`~/dev` out of the box, configurable via **⚙**).
+  Point it at a broad root so hoisted memories apply across every project
+  instead of one.
 - **Delete** — with confirmation, and the dangling entry is stripped from that
   domain's `MEMORY.md` index automatically.
+
+## Settings
+
+**⚙** in the top bar opens settings, persisted to `~/.claude/mem-gui.json`:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Default hoist directory | `~/dev` | The project directory the one-click **Hoist** button targets. `~` is kept as typed. |
+
+The directory is validated when you save — a path that doesn't exist is rejected
+there and then, rather than failing on every later hoist.
 
 ## How it works
 
@@ -64,7 +82,11 @@ separate server to manage.
   of its session transcripts.
 - `src/migrate.ts` implements the two relocation flows — the LLM-assisted
   *integrate* (structurally read-only: tools locked to `Read`/`Glob`/`Grep`, MCP
-  disabled, so the proposal step *cannot* write) and the deterministic *hoist*.
+  disabled, so the proposal step *cannot* write) and the deterministic *move*.
+- `src/paths.ts` owns the escaped-path ↔ domain mapping in the exact direction
+  (real path → domain id) and validates any directory you name.
+- `src/settings.ts` reads/writes `~/.claude/mem-gui.json`, falling back to
+  defaults whenever it's missing or malformed.
 - `public/treemap.js` renders the squarified layout and the inspect panel.
 - `main.ts` wires the bindings up and guards every filesystem action behind a
   check that the path lives inside the managed memory store.
@@ -100,12 +122,17 @@ The app runs with a deliberately narrow permission set (see `deno.json`):
 
 | Scope | Grant | Why |
 | --- | --- | --- |
-| Read / write | `~/.claude/projects`, `~/dev` | scan and manage the memory store |
+| Read | `$HOME` | scan the memory store, and check that a move destination is a real directory |
+| Write | `~/.claude`, `~/dev` | manage the memory store and the settings file |
 | Run | `open`, `claude` | reveal/open files, and the read-only integrate proposal |
 | Net | `127.0.0.1` | serve the local page to the webview |
 
-Nothing outside `~/.claude/projects/*/memory/` is ever touched — path guards in
-`main.ts` and `src/migrate.ts` enforce it at the boundary.
+Read is broad because a move destination can be any directory and has to be
+verified before use; **write is not** — apart from `~/.claude/mem-gui.json`,
+nothing outside `~/.claude/projects/*/memory/` is ever touched by a move, and
+path guards in `main.ts` and `src/migrate.ts` enforce it at the boundary.
+(*Integrate* is the one flow that writes into a repo, which is why `~/dev` is
+also writable; point that grant elsewhere if your projects live somewhere else.)
 
 ## Project layout
 
@@ -113,12 +140,14 @@ Nothing outside `~/.claude/projects/*/memory/` is ever touched — path guards i
 main.ts              # bindings + local asset server + path guards
 src/
   scanner.ts         # walk the memory store, parse frontmatter, resolve domains
-  migrate.ts         # integrate (LLM-assisted) and hoist (deterministic) flows
+  migrate.ts         # integrate (LLM-assisted) and move (deterministic) flows
+  paths.ts           # project dir -> domain id mapping + destination validation
+  settings.ts        # ~/.claude/mem-gui.json (default hoist directory)
   types.ts           # Domain / MemoryFile shapes
 public/
   index.html         # window shell
   styles.css         # dark treemap theme
-  treemap.js         # squarified layout + inspect panel
+  treemap.js         # squarified layout, inspect panel, move + settings UI
 deno.json            # tasks, desktop config, permission scopes
 ```
 
