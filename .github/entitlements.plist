@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the release build. Applied by .github/workflows/release.yml
+  when it re-signs the bundle; `deno desktop` applies none of its own.
+
+  allow-jit is not optional: signing with a real Developer ID turns on the
+  Hardened Runtime, and under Hardened Runtime mmap(MAP_JIT) is denied without
+  this entitlement. V8 can't reserve its executable CodeRange and aborts before
+  the window ever opens — which is exactly how v0.1.1 shipped and died:
+
+    # Fatal process out of memory: Failed to reserve virtual memory for CodeRange
+
+  Verified by A/B on an otherwise identical bundle: without this key the app
+  aborts at V8 init, with it the app starts and serves.
+
+  Kept to this single key deliberately. Every entitlement here weakens the
+  Hardened Runtime, so nothing goes in without a demonstrated failure behind it.
+  In particular the app does NOT need:
+
+  - disable-library-validation — a real Developer ID gives laufey_webview and
+    libruntime.dylib the same Team ID, so library validation passes. It is only
+    needed for locally ad-hoc-signed builds, which have no Team ID at all.
+  - allow-unsigned-executable-memory — allow-jit alone is sufficient; V8 uses
+    MAP_JIT rather than unsigned executable pages.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>

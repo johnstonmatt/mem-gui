@@ -198,9 +198,11 @@ scripts/
   set_codesign_identity.ts  # swaps in the real Developer ID at release time
 deno.jsonc           # version, tasks, desktop config, permission scopes
 release-please-config.json  # conventional-commits -> release PRs
-.github/workflows/
-  ci.yml             # fmt, lint, type check, tests, no-remote-deps guard
-  release.yml        # release PR, then build + sign + notarize the .app
+.github/
+  entitlements.plist # allow-jit — V8 can't start under Hardened Runtime without it
+  workflows/
+    ci.yml           # fmt, lint, type check, tests, no-remote-deps guard
+    release.yml      # release PR, then build + sign + notarize the .app
 ```
 
 ## License
