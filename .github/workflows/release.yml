@@ -129,31 +129,50 @@ jobs:
       # tree. Deliberately no --deep: the nested Mach-Os (laufey_webview and the
       # runtime dylib) are already signed and keep their own signatures, which
       # is also Apple's guidance over --deep.
+      #
+      # The re-sign also attaches entitlements, which `deno desktop` never does.
+      # Signing with a real Developer ID enables the Hardened Runtime, and under
+      # it mmap(MAP_JIT) is denied without com.apple.security.cs.allow-jit, so
+      # V8 can't reserve its executable CodeRange and aborts before the window
+      # opens. That is how v0.1.1 shipped and died on launch:
+      #
+      #   # Fatal process out of memory: Failed to reserve virtual memory for CodeRange
+      #
+      # See .github/entitlements.plist for why that's the only key in there.
       - name: Re-seal bundle
         run: |
           set -euo pipefail
 
-          # What makes --force safe here is that the bundle's main executable is
-          # a /bin/sh launcher, so the outer signature carries no entitlements
-          # to lose. Assert it rather than assume it: if a future deno desktop
-          # ships a Mach-O main executable with entitlements, fail here instead
-          # of quietly shipping a build that's missing them.
-          if codesign -d --entitlements - --xml "$APP" 2>/dev/null | grep -q "<key>"; then
-            echo "::error::Outer bundle now carries entitlements; re-sealing would drop them."
-            exit 1
-          fi
-
           if [ -n "$MACOS_SIGN_IDENTITY" ]; then
+            # CFBundleExecutable is laufey_webview, a Mach-O, so signing the
+            # bundle puts these entitlements on the process that hosts V8 —
+            # which is the only place they take effect.
             codesign --force --options runtime --timestamp \
+              --entitlements .github/entitlements.plist \
               --sign "$MACOS_SIGN_IDENTITY" "$APP"
           else
-            # No identity configured, so match what the build already did and
-            # keep the bundle ad-hoc — --timestamp needs a real identity.
+            # No identity, so deno signed ad-hoc and the Hardened Runtime is
+            # off — no MAP_JIT restriction to work around, and --timestamp
+            # needs a real identity. Match what the build already did.
             codesign --force --sign - "$APP"
           fi
 
       - name: Verify signature
         run: codesign --verify --deep --strict --verbose=2 "$APP"
+
+      # A silently-empty --entitlements would ship another build that dies at
+      # V8 init, and neither codesign nor notarization would object. Assert the
+      # entitlement is really in the signature rather than trusting the flag.
+      - name: Verify JIT entitlement
+        if: env.MACOS_SIGN_IDENTITY != ''
+        run: |
+          set -euo pipefail
+          if ! codesign -d --entitlements - --xml "$APP" 2>/dev/null \
+            | grep -q "com.apple.security.cs.allow-jit"; then
+            echo "::error::allow-jit missing from the signed bundle — V8 would abort at launch."
+            exit 1
+          fi
+          echo "allow-jit present."
 
       # Notarization requires Hardened Runtime on every Mach-O in the bundle,
       # and V8 needs the JIT entitlement once it's on. Whether `deno desktop`
