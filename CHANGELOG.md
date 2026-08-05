@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/johnstonmatt/mem-gui/compare/v0.1.2...v0.1.3) (2026-08-05)
+
+
+### Bug Fixes
+
+* **release:** don't bake the build machine's $HOME into the app ([#12](https://github.com/johnstonmatt/mem-gui/issues/12)) ([c8c891b](https://github.com/johnstonmatt/mem-gui/commit/c8c891b729730e97bca802b8795c5c3e32201b05))
+
 ## [0.1.2](https://github.com/johnstonmatt/mem-gui/compare/v0.1.1...v0.1.2) (2026-08-05)
 
 
