@@ -118,8 +118,57 @@ jobs:
       - name: Build
         run: deno task build:mac
 
+      # `deno desktop` copies Contents/Resources/AppIcon.icns into the bundle
+      # *after* it codesigns, so the icon is never sealed into CodeResources and
+      # the signature is genuinely invalid: "a sealed resource is missing or
+      # invalid". Notarization rejects that too, so this isn't cosmetic.
+      # Reproducible locally with a plain ad-hoc `deno task build:mac`, i.e. an
+      # upstream ordering bug rather than anything about this workflow.
+      #
+      # Re-signing the outer bundle regenerates CodeResources over the finished
+      # tree. Deliberately no --deep: the nested Mach-Os (laufey_webview and the
+      # runtime dylib) are already signed and keep their own signatures, which
+      # is also Apple's guidance over --deep.
+      - name: Re-seal bundle
+        run: |
+          set -euo pipefail
+
+          # What makes --force safe here is that the bundle's main executable is
+          # a /bin/sh launcher, so the outer signature carries no entitlements
+          # to lose. Assert it rather than assume it: if a future deno desktop
+          # ships a Mach-O main executable with entitlements, fail here instead
+          # of quietly shipping a build that's missing them.
+          if codesign -d --entitlements - --xml "$APP" 2>/dev/null | grep -q "<key>"; then
+            echo "::error::Outer bundle now carries entitlements; re-sealing would drop them."
+            exit 1
+          fi
+
+          if [ -n "$MACOS_SIGN_IDENTITY" ]; then
+            codesign --force --options runtime --timestamp \
+              --sign "$MACOS_SIGN_IDENTITY" "$APP"
+          else
+            # No identity configured, so match what the build already did and
+            # keep the bundle ad-hoc — --timestamp needs a real identity.
+            codesign --force --sign - "$APP"
+          fi
+
       - name: Verify signature
         run: codesign --verify --deep --strict --verbose=2 "$APP"
+
+      # Notarization requires Hardened Runtime on every Mach-O in the bundle,
+      # and V8 needs the JIT entitlement once it's on. Whether `deno desktop`
+      # applies either when signing with a real identity is undocumented and
+      # can't be checked locally without a Developer ID, so print it: if the
+      # next step is rejected, this says whether the cause was a missing runtime
+      # flag or entitlement rather than the credentials.
+      - name: Report signing state
+        run: |
+          for target in "$APP" "$APP/Contents/MacOS/laufey_webview"; do
+            echo "── $target"
+            codesign -dvvv "$target" 2>&1 | grep -E "^(CodeDirectory|Identifier|TeamIdentifier|Timestamp)" || true
+            codesign -d --entitlements - --xml "$target" 2>/dev/null || true
+            echo
+          done
 
       - name: Notarize and staple
         if: env.APPLE_API_KEY != ''
