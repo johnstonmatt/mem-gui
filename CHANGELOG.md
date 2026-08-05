@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.4](https://github.com/johnstonmatt/mem-gui/compare/v0.1.3...v0.1.4) (2026-08-05)
+
+
+### Bug Fixes
+
+* make the red close button quit the app ([#17](https://github.com/johnstonmatt/mem-gui/issues/17)) ([6083bd8](https://github.com/johnstonmatt/mem-gui/commit/6083bd835a1a3536ae8a9a9a2c8e595a757030ae))
+
+
+### Documentation
+
+* add macOS installation instructions ([#15](https://github.com/johnstonmatt/mem-gui/issues/15)) ([0ae5fe4](https://github.com/johnstonmatt/mem-gui/commit/0ae5fe4b510e63e310250ba146df2472fe6ee4e9))
+
 ## [0.1.3](https://github.com/johnstonmatt/mem-gui/compare/v0.1.2...v0.1.3) (2026-08-05)
 
 
