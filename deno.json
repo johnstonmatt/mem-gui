@@ -1,7 +1,16 @@
 {
   "tasks": {
     "dev": "deno desktop --hmr --allow-read=$HOME --allow-write=$HOME/.claude,$HOME/dev --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS --allow-net=127.0.0.1 main.ts",
-    "build:mac": "deno desktop --output dist/MemGui.app --allow-read=$HOME --allow-write=$HOME/.claude,$HOME/dev --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS --allow-net=127.0.0.1 main.ts"
+    "build:mac": "deno desktop --output dist/MemGui.app --allow-read=$HOME --allow-write=$HOME/.claude,$HOME/dev --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS --allow-net=127.0.0.1 main.ts",
+    "fmt": "deno fmt",
+    "lint": "deno lint",
+    // Tests write only to their own temp dir, but that lives outside $HOME, so
+    // the read/write grants can't be narrowed the way the app's are.
+    "test": "deno test --allow-env --allow-read --allow-write",
+    // Everything CI runs, in one command — see .github/workflows/ci.yml.
+    // Named "checks" (plural) so it doesn't read as a wrapper for `deno check`,
+    // which is only one of the four steps it runs.
+    "checks": "deno fmt --check && deno lint && deno check main.ts src && deno test --allow-env --allow-read --allow-write"
   },
   "desktop": {
     "app": {
@@ -14,6 +23,11 @@
   },
   "compilerOptions": {
     "lib": ["deno.window", "deno.desktop"]
+  },
+  // Design assets are authored by hand/tooling, not written to deno fmt's
+  // style — reformatting icon.svg is pure churn and would make CI demand it.
+  "fmt": {
+    "exclude": ["assets", "dist"]
   },
   // Intentionally empty: pulling any remote module into the graph breaks
   // `deno desktop`'s webview bindings (see the note at the top of

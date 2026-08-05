@@ -349,7 +349,6 @@ document.getElementById("delete-btn").addEventListener("click", async () => {
 // Neither one auto-deletes as a side effect of writing; a move's deletion of
 // the original is part of the move the user confirmed, not a hidden extra.
 
-const actionStatusEl = document.getElementById("action-status");
 const actionSpinnerEl = document.getElementById("action-spinner");
 const actionStatusTextEl = document.getElementById("action-status-text");
 const integrateBtn = document.getElementById("integrate-btn");
@@ -398,9 +397,12 @@ integrateBtn.addEventListener("click", async () => {
   if (!file) return;
 
   resetMigratePanel();
-  setActionStatus(`Asking claude how best to integrate this into ${file.domainLabel}…`, {
-    spinning: true,
-  });
+  setActionStatus(
+    `Asking claude how best to integrate this into ${file.domainLabel}…`,
+    {
+      spinning: true,
+    },
+  );
 
   try {
     const proposal = await bindings.proposeIntegration(
@@ -713,6 +715,8 @@ async function load() {
 }
 
 refreshBtn.addEventListener("click", load);
-window.addEventListener("resize", () => render());
+// globalThis rather than window: identical in the webview, and it keeps this
+// file clean under `deno lint`, which lints it with Deno's rules (no-window).
+globalThis.addEventListener("resize", () => render());
 
 load();

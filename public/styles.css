@@ -2,7 +2,8 @@
   box-sizing: border-box;
 }
 
-html, body {
+html,
+body {
   margin: 0;
   height: 100%;
   background: #1b1d21;
@@ -66,7 +67,8 @@ html, body {
   width: 90px;
   height: 8px;
   border-radius: 4px;
-  background: linear-gradient(90deg, hsl(210 70% 45%), hsl(105 60% 45%), hsl(45 85% 50%), hsl(0 80% 50%));
+  background: linear-gradient(90deg, hsl(210 70% 45%), hsl(105 60% 45%), hsl(45
+    85% 50%), hsl(0 80% 50%));
 }
 
 .legend-swatch {

@@ -103,41 +103,59 @@ const win = new Deno.BrowserWindow({
 // over the wire anyway.
 win.bind("getTree", (() => scanDomains()) as never);
 
-win.bind("getFileContent", ((path: string) => {
-  assertManagedPath(path);
-  return Deno.readTextFile(path);
-}) as never);
+win.bind(
+  "getFileContent",
+  ((path: string) => {
+    assertManagedPath(path);
+    return Deno.readTextFile(path);
+  }) as never,
+);
 
-win.bind("deleteFile", (async (path: string) => {
-  assertManagedPath(path);
-  await Deno.remove(path);
-  await removeFromIndex(path);
-  return scanDomains();
-}) as never);
+win.bind(
+  "deleteFile",
+  (async (path: string) => {
+    assertManagedPath(path);
+    await Deno.remove(path);
+    await removeFromIndex(path);
+    return scanDomains();
+  }) as never,
+);
 
-win.bind("revealInFinder", ((path: string) => {
-  assertManagedPath(path);
-  new Deno.Command("open", { args: ["-R", path] }).spawn();
-}) as never);
+win.bind(
+  "revealInFinder",
+  ((path: string) => {
+    assertManagedPath(path);
+    new Deno.Command("open", { args: ["-R", path] }).spawn();
+  }) as never,
+);
 
-win.bind("openFile", ((path: string) => {
-  assertManagedPath(path);
-  new Deno.Command("open", { args: [path] }).spawn();
-}) as never);
+win.bind(
+  "openFile",
+  ((path: string) => {
+    assertManagedPath(path);
+    new Deno.Command("open", { args: [path] }).spawn();
+  }) as never,
+);
 
 // "Integrate": assumes the memory's own project repo. Proposing is
 // read-only (see migrate.ts); writing is a single file, always markdown,
 // always inside that repo — reversible via the repo's own git history.
-win.bind("proposeIntegration", ((memory: MigratableMemory, repoRoot: string) => {
-  assertManagedPath(memory.path);
-  return proposeIntegration(memory, repoRoot);
-}) as never);
+win.bind(
+  "proposeIntegration",
+  ((memory: MigratableMemory, repoRoot: string) => {
+    assertManagedPath(memory.path);
+    return proposeIntegration(memory, repoRoot);
+  }) as never,
+);
 
-win.bind("applyIntegration", ((
-  repoRoot: string,
-  targetFile: string,
-  content: string,
-) => writeIntegration(repoRoot, targetFile, content)) as never);
+win.bind(
+  "applyIntegration",
+  ((
+    repoRoot: string,
+    targetFile: string,
+    content: string,
+  ) => writeIntegration(repoRoot, targetFile, content)) as never,
+);
 
 // "Move": fully deterministic relocation into another project's memory store
 // — no LLM, no arbitrary write target. The destination only ever selects
@@ -149,24 +167,32 @@ win.bind("applyIntegration", ((
 // simple append/line-removal), so this is one coherent, reversible operation
 // rather than the kind of unpredictable multi-file fan-out we ruled out
 // for LLM-directed writes (see feedback_scope_destructive_actions memory).
-win.bind("moveMemory", ((
-  memory: MigratableMemory,
-  sourceDomain: string,
-  dest: MoveDestination,
-) => {
-  assertManagedPath(memory.path);
-  return (async () => {
-    const result = await writeMovedMemory(memory, sourceDomain, dest);
-    const destDir = result.writtenPath.slice(
-      0,
-      result.writtenPath.lastIndexOf("/"),
-    );
-    await addToIndex(destDir, memory.filename, memory.name, memory.description);
-    await Deno.remove(memory.path);
-    await removeFromIndex(memory.path);
-    return { ...result, domains: await scanDomains() };
-  })();
-}) as never);
+win.bind(
+  "moveMemory",
+  ((
+    memory: MigratableMemory,
+    sourceDomain: string,
+    dest: MoveDestination,
+  ) => {
+    assertManagedPath(memory.path);
+    return (async () => {
+      const result = await writeMovedMemory(memory, sourceDomain, dest);
+      const destDir = result.writtenPath.slice(
+        0,
+        result.writtenPath.lastIndexOf("/"),
+      );
+      await addToIndex(
+        destDir,
+        memory.filename,
+        memory.name,
+        memory.description,
+      );
+      await Deno.remove(memory.path);
+      await removeFromIndex(memory.path);
+      return { ...result, domains: await scanDomains() };
+    })();
+  }) as never,
+);
 
 // Settings are read on load (to label the one-click hoist button with its
 // current target) and written only when the user saves. writeSettings
