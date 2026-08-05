@@ -53,8 +53,12 @@
   },
   // Design assets are authored by hand/tooling, not written to deno fmt's
   // style — reformatting icon.svg is pure churn and would make CI demand it.
+  // CHANGELOG.md is the same case and not optional: release-please regenerates
+  // it from scratch every release with "*" bullets and unwrapped lines, so
+  // formatting it here would fail CI on the release PR, and "fixing" that by
+  // committing the formatted version just gets overwritten by the next release.
   "fmt": {
-    "exclude": ["assets", "dist"]
+    "exclude": ["assets", "dist", "CHANGELOG.md"]
   },
   // Intentionally empty: pulling any remote module into the graph breaks
   // `deno desktop`'s webview bindings (see the note at the top of
