@@ -161,7 +161,7 @@ the experimental `deno desktop` runtime.
 
 ## Permissions
 
-The app runs with a deliberately narrow permission set (see `deno.json`):
+The app runs with a deliberately narrow permission set (see `deno.jsonc`):
 
 | Scope | Grant                | Why                                                                          |
 | ----- | -------------------- | ---------------------------------------------------------------------------- |
@@ -193,9 +193,14 @@ public/
   index.html         # window shell
   styles.css         # dark treemap theme
   treemap.js         # squarified layout, inspect panel, move + settings UI
-deno.json            # tasks, desktop config, permission scopes
+scripts/
+  setup_release.ts   # interactive one-time setup of the Apple release secrets
+  set_codesign_identity.ts  # swaps in the real Developer ID at release time
+deno.jsonc           # version, tasks, desktop config, permission scopes
+release-please-config.json  # conventional-commits -> release PRs
 .github/workflows/
   ci.yml             # fmt, lint, type check, tests, no-remote-deps guard
+  release.yml        # release PR, then build + sign + notarize the .app
 ```
 
 ## License
