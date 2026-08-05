@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/johnstonmatt/mem-gui/compare/v0.1.1...v0.1.2) (2026-08-05)
+
+
+### Bug Fixes
+
+* **release:** sign with the allow-jit entitlement ([#10](https://github.com/johnstonmatt/mem-gui/issues/10)) ([0aed467](https://github.com/johnstonmatt/mem-gui/commit/0aed4671883f6fe12e2b620c8761a815a0617dcd))
+
 ## [0.1.1](https://github.com/johnstonmatt/mem-gui/compare/v0.1.0...v0.1.1) (2026-08-05)
 
 
