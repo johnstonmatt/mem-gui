@@ -1,0 +1,156 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Releases are serial by nature: a second push should update the pending
+# release PR, never race a build that is already uploading assets. Unlike CI,
+# an in-flight run here must not be cancelled.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # Keeps a "chore(main): release x.y.z" PR open and up to date with every
+  # conventional commit that lands on main. Merging that PR is the release:
+  # it bumps deno.jsonc, writes CHANGELOG.md, tags, and cuts the GitHub
+  # release — which is what triggers the build below.
+  #
+  # release-please-config.json is strict JSON and can't explain itself, so:
+  # release-type is "go" purely because that strategy writes no version file
+  # of its own. Every other strategy insists on one (simple → version.txt,
+  # node → package.json), which would mean two places claiming to know the
+  # version. Here deno.jsonc's "version" is the only one, updated via the
+  # generic updater and its x-release-please-version annotation. Nothing
+  # about the build is Go-specific.
+  #
+  # bump-minor-pre-major keeps a breaking change below 1.0 at 0.x → 0.(x+1)
+  # instead of release-please's default, which would read a single `feat!:` as
+  # "ship 1.0.0" and make a stable-API promise by accident. Going to 1.0 should
+  # be deliberate: put `Release-As: 1.0.0` in a commit footer when it's time.
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          # GITHUB_TOKEN works, but PRs opened with it don't trigger other
+          # workflows, so ci.yml never runs on the release PR. Set a PAT with
+          # repo scope as RELEASE_PLEASE_TOKEN to get checks on it.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+  # macOS-only because `deno desktop` builds the .app with the platform's own
+  # toolchain, and signing/notarization needs codesign and notarytool.
+  build-macos:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      APP: dist/MemGui.app
+      # These are empty until the Apple Developer secrets are configured, and
+      # every signing step below is skipped when they are — the build still
+      # produces a runnable ad-hoc signed .app, it just trips Gatekeeper once
+      # downloaded. That way the release pipeline works before the paid
+      # developer account does.
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+    steps:
+      # Build the tag, not the branch head — another push can land on main
+      # between the release commit and this job starting.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Import Developer ID certificate
+        if: env.MACOS_CERTIFICATE != ''
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # Runner-lifetime keychain; the lock timeout just bounds the damage
+          # if a job hangs.
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # Without this, codesign blocks on a GUI prompt for keychain access
+          # that no one is there to answer.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          # Keep login.keychain in the search list: the Apple intermediate
+          # certs live there and codesign needs them to build the chain.
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Set signing identity
+        if: env.MACOS_SIGN_IDENTITY != ''
+        run: |
+          deno run --allow-read=deno.jsonc --allow-write=deno.jsonc \
+            scripts/set_codesign_identity.ts "$MACOS_SIGN_IDENTITY"
+
+      - name: Build
+        run: deno task build:mac
+
+      - name: Verify signature
+        run: codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Notarize and staple
+        if: env.APPLE_API_KEY != ''
+        run: |
+          set -euo pipefail
+          echo "$APPLE_API_KEY" | base64 --decode > "$RUNNER_TEMP/api-key.p8"
+
+          # notarytool won't take a bundle directory — the zip is purely a
+          # transport for the submission.
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --key "$RUNNER_TEMP/api-key.p8" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+
+          # Staple the ticket into the .app itself so first launch validates
+          # without a network round trip. The asset is zipped after this.
+          xcrun stapler staple "$APP"
+          rm "$RUNNER_TEMP/api-key.p8"
+
+      - name: Verify Gatekeeper acceptance
+        if: env.APPLE_API_KEY != ''
+        run: spctl --assess --type execute --verbose=4 "$APP"
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          # ditto, not `zip`: it preserves the symlinks and extended attributes
+          # inside a .app bundle that the signature is computed over.
+          ASSET="MemGui-${{ needs.release-please.outputs.tag_name }}-macos-arm64.zip"
+          ditto -c -k --keepParent "$APP" "$ASSET"
+          echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" \
+            "$ASSET" --clobber

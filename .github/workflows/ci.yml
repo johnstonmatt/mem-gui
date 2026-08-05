@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's result irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # Kept as separate steps rather than `deno task checks` so a failure names
+      # which check broke without having to open the log.
+      - name: Format
+        run: deno fmt --check
+
+      - name: Lint
+        run: deno lint
+
+      - name: Type check
+        run: deno check main.ts src scripts
+
+      - name: Test
+        run: deno test --allow-env --allow-read --allow-write
+
+      # The app has no dependencies on purpose: any remote module in the graph
+      # breaks `deno desktop`'s webview bindings, which fails at runtime in the
+      # window rather than at build time, where no check above would catch it.
+      # See the note at the top of src/paths.ts.
+      - name: No remote dependencies
+        run: |
+          if grep -rnE 'from "(jsr:|npm:|https?:)' main.ts src public; then
+            echo "::error::Remote import found — this breaks deno desktop's bindings (see src/paths.ts)."
+            exit 1
+          fi
+          echo "No remote imports."
+
+# Not built here: `deno task build:mac` needs macOS and downloads the
+# experimental `deno desktop` webview runtime, so it stays a local step.

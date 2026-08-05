@@ -1,0 +1,63 @@
+{
+  // The only in-code representation of the version. Bumped by release-please
+  // when a release PR merges — the trailing annotation is how it finds this
+  // line (see the note in .github/workflows/release.yml for why the config
+  // picks the strategy it does).
+  //
+  // Load-bearing, not just bookkeeping: `deno desktop` bakes this into the
+  // built dylib and exposes it as `Deno.desktopVersion`, which is the value
+  // Deno.autoUpdate() compares against latest.json to decide whether to patch.
+  // It does *not* reach Info.plist — CFBundleShortVersionString is hardcoded to
+  // "1.0" and CFBundleVersion to "1.0.0" with no config key to override them,
+  // so what Finder's Get Info shows is frozen regardless of what's here.
+  "version": "0.1.0", // x-release-please-version
+  "tasks": {
+    "dev": "deno desktop --hmr --allow-read=$HOME --allow-write=$HOME/.claude,$HOME/dev --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS --allow-net=127.0.0.1 main.ts",
+    "build:mac": "deno desktop --output dist/MemGui.app --allow-read=$HOME --allow-write=$HOME/.claude,$HOME/dev --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS --allow-net=127.0.0.1 main.ts",
+    "fmt": "deno fmt",
+    "lint": "deno lint",
+    // One-time interactive setup for the release workflow's Apple secrets. The
+    // read/write grants are broad because the .p12 and .p8 it reads live
+    // wherever you exported them, and verifying the cert needs a scratch
+    // keychain in the system temp dir — both outside anything narrower.
+    "setup:release": "deno run --allow-run=gh,security,xcrun --allow-read --allow-write --allow-env=HOME scripts/setup_release.ts",
+    // Tests write only to their own temp dir, but that lives outside $HOME, so
+    // the read/write grants can't be narrowed the way the app's are.
+    "test": "deno test --allow-env --allow-read --allow-write",
+    // Everything CI runs, in one command — see .github/workflows/ci.yml.
+    // Named "checks" (plural) so it doesn't read as a wrapper for `deno check`,
+    // which is only one of the four steps it runs.
+    "checks": "deno fmt --check && deno lint && deno check main.ts src scripts && deno test --allow-env --allow-read --allow-write"
+  },
+  "desktop": {
+    "app": {
+      "name": "Mem GUI",
+      "identifier": "dev.johnstonmatt.mem-gui",
+      "icons": {
+        "macos": "./assets/icon.icns"
+      }
+    },
+    "macos": {
+      // Ad-hoc ("-") so `deno task build:mac` works on any machine, with or
+      // without an Apple Developer cert. That's enough code identity for the
+      // OS to remember the app, but Gatekeeper still warns once it's been
+      // downloaded. The release workflow rewrites this line with the real
+      // Developer ID before building — that's what switches on the Hardened
+      // Runtime and secure timestamp notarization requires. There's no CLI
+      // flag for it, hence scripts/set_codesign_identity.ts.
+      "codesignIdentity": "-"
+    }
+  },
+  "compilerOptions": {
+    "lib": ["deno.window", "deno.desktop"]
+  },
+  // Design assets are authored by hand/tooling, not written to deno fmt's
+  // style — reformatting icon.svg is pure churn and would make CI demand it.
+  "fmt": {
+    "exclude": ["assets", "dist"]
+  },
+  // Intentionally empty: pulling any remote module into the graph breaks
+  // `deno desktop`'s webview bindings (see the note at the top of
+  // src/paths.ts). Keep this app dependency-free.
+  "imports": {}
+}

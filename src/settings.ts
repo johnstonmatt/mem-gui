@@ -17,7 +17,7 @@ const DEFAULTS: Settings = { defaultHoistDir: "~" };
 /**
  * Lives beside Claude Code's own state rather than in `~/.config`, so the
  * app's write scope stays limited to the one directory tree it already needs
- * (see the permission grants in deno.json).
+ * (see the permission grants in deno.jsonc).
  */
 export function settingsPath(): string {
   const home = Deno.env.get("HOME") ?? "";

@@ -1,114 +1,114 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8" />
-<title>Mem GUI</title>
-<link rel="stylesheet" href="/styles.css" />
-</head>
-<body>
-  <header id="topbar">
-    <nav id="breadcrumb"><span data-domain="">All domains</span></nav>
-    <div id="legend">
-      <span class="legend-label">recency</span>
-      <span id="legend-gradient"></span>
-      <span class="legend-label">old</span>
-      <span id="legend-swatch-low" class="legend-swatch"></span>
-      <span id="legend-swatch-high" class="legend-swatch"></span>
-      <span class="legend-label">new</span>
-    </div>
-    <button id="settings-btn" title="Settings">⚙</button>
-    <button id="refresh-btn" title="Rescan memory store">⟳</button>
-  </header>
+  <head>
+    <meta charset="utf-8" />
+    <title>Mem GUI</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header id="topbar">
+      <nav id="breadcrumb"><span data-domain="">All domains</span></nav>
+      <div id="legend">
+        <span class="legend-label">recency</span>
+        <span id="legend-gradient"></span>
+        <span class="legend-label">old</span>
+        <span id="legend-swatch-low" class="legend-swatch"></span>
+        <span id="legend-swatch-high" class="legend-swatch"></span>
+        <span class="legend-label">new</span>
+      </div>
+      <button id="settings-btn" title="Settings">⚙</button>
+      <button id="refresh-btn" title="Rescan memory store">⟳</button>
+    </header>
 
-  <main id="treemap"></main>
+    <main id="treemap"></main>
 
-  <div id="empty-state" class="hidden">
+    <div id="empty-state" class="hidden">
     No memory files found under <code>~/.claude/projects/*/memory/</code>.
   </div>
 
-  <aside id="detail" class="hidden">
-    <button id="close-detail" aria-label="Close">×</button>
-    <div id="detail-domain" class="detail-domain"></div>
-    <h2 id="detail-name"></h2>
-    <div id="detail-meta"></div>
-    <pre id="detail-content"></pre>
-    <div id="detail-actions">
-      <button id="reveal-btn">Reveal in Finder</button>
-      <button id="open-btn">Open</button>
-      <button id="integrate-btn">Integrate into repo</button>
-      <button id="hoist-btn">Hoist</button>
-      <button id="move-btn">Move to…</button>
-      <button id="delete-btn" class="danger">Delete</button>
-    </div>
+    <aside id="detail" class="hidden">
+      <button id="close-detail" aria-label="Close">×</button>
+      <div id="detail-domain" class="detail-domain"></div>
+      <h2 id="detail-name"></h2>
+      <div id="detail-meta"></div>
+      <pre id="detail-content"></pre>
+      <div id="detail-actions">
+        <button id="reveal-btn">Reveal in Finder</button>
+        <button id="open-btn">Open</button>
+        <button id="integrate-btn">Integrate into repo</button>
+        <button id="hoist-btn">Hoist</button>
+        <button id="move-btn">Move to…</button>
+        <button id="delete-btn" class="danger">Delete</button>
+      </div>
 
-    <div id="action-status">
-      <span id="action-spinner" class="spinner hidden"></span>
-      <span id="action-status-text"></span>
-    </div>
+      <div id="action-status">
+        <span id="action-spinner" class="spinner hidden"></span>
+        <span id="action-status-text"></span>
+      </div>
 
-    <div id="integrate-panel" class="hidden">
-      <div id="integrate-proposal-target"></div>
-      <div id="integrate-proposal-summary"></div>
-      <pre id="integrate-proposal-content"></pre>
-      <p id="integrate-proposal-note">
+      <div id="integrate-panel" class="hidden">
+        <div id="integrate-proposal-target"></div>
+        <div id="integrate-proposal-summary"></div>
+        <pre id="integrate-proposal-content"></pre>
+        <p id="integrate-proposal-note">
         Writing only touches the file above. Once it's written, you'll be
         asked whether to delete the original memory too.
       </p>
-      <div id="integrate-proposal-actions">
-        <button id="integrate-apply-btn">Write to file</button>
-        <button id="integrate-discard-btn">Discard</button>
+        <div id="integrate-proposal-actions">
+          <button id="integrate-apply-btn">Write to file</button>
+          <button id="integrate-discard-btn">Discard</button>
+        </div>
       </div>
-    </div>
 
-    <div id="move-panel" class="hidden">
-      <label class="field-label" for="move-dest">Move to</label>
-      <select id="move-dest"></select>
-      <input
-        id="move-dest-dir"
-        class="hidden"
-        type="text"
-        spellcheck="false"
-        autocapitalize="off"
-        placeholder="/Users/you/some/project"
-      />
-      <p id="move-note">
+      <div id="move-panel" class="hidden">
+        <label class="field-label" for="move-dest">Move to</label>
+        <select id="move-dest"></select>
+        <input
+          id="move-dest-dir"
+          class="hidden"
+          type="text"
+          spellcheck="false"
+          autocapitalize="off"
+          placeholder="/Users/you/some/project"
+        />
+        <p id="move-note">
         Relocates the file into that project's memory store, updating the
         <code>MEMORY.md</code> index at both ends. Refuses if a memory of the
         same name is already there.
       </p>
-      <div id="move-actions">
-        <button id="move-confirm-btn">Move</button>
-        <button id="move-cancel-btn">Cancel</button>
+        <div id="move-actions">
+          <button id="move-confirm-btn">Move</button>
+          <button id="move-cancel-btn">Cancel</button>
+        </div>
       </div>
-    </div>
-  </aside>
+    </aside>
 
-  <div id="settings-overlay" class="hidden">
-    <div id="settings-dialog">
-      <h2>Settings</h2>
-      <label class="field-label" for="settings-hoist-dir">
+    <div id="settings-overlay" class="hidden">
+      <div id="settings-dialog">
+        <h2>Settings</h2>
+        <label class="field-label" for="settings-hoist-dir">
         Default hoist directory
       </label>
-      <input
-        id="settings-hoist-dir"
-        type="text"
-        spellcheck="false"
-        autocapitalize="off"
-        placeholder="~"
-      />
-      <p class="settings-hint">
+        <input
+          id="settings-hoist-dir"
+          type="text"
+          spellcheck="false"
+          autocapitalize="off"
+          placeholder="~"
+        />
+        <p class="settings-hint">
         The project directory the one-click <strong>Hoist</strong> button moves a
         memory into — use a broad root so hoisted memories apply across projects.
         Its store lives at <code>~/.claude/projects/&lt;escaped-path&gt;/memory/</code>.
       </p>
-      <div id="settings-status"></div>
-      <div id="settings-actions">
-        <button id="settings-save-btn">Save</button>
-        <button id="settings-cancel-btn">Cancel</button>
+        <div id="settings-status"></div>
+        <div id="settings-actions">
+          <button id="settings-save-btn">Save</button>
+          <button id="settings-cancel-btn">Cancel</button>
+        </div>
       </div>
     </div>
-  </div>
 
-  <script type="module" src="/treemap.js"></script>
-</body>
+    <script type="module" src="/treemap.js"></script>
+  </body>
 </html>
