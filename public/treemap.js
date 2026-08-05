@@ -12,7 +12,7 @@ const state = {
   activeFile: null,
   // Mirrors the backend defaults in src/settings.ts so the UI still renders
   // sensibly if the settings read fails.
-  settings: { defaultHoistDir: "~/dev" },
+  settings: { defaultHoistDir: "~" },
 };
 
 // --- squarified treemap layout -------------------------------------------

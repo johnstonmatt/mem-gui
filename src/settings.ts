@@ -3,12 +3,16 @@ import { resolveProjectDir } from "./paths.ts";
 export interface Settings {
   /**
    * Project directory the one-click "Hoist" action moves a memory into. Stored
-   * as typed (so `~/dev` stays `~/dev` in the file) and expanded on use.
+   * as typed (so `~` stays `~` in the file rather than being baked into an
+   * absolute path) and expanded on use.
    */
   defaultHoistDir: string;
 }
 
-const DEFAULTS: Settings = { defaultHoistDir: "~/dev" };
+// Defaults to the home root: hoisting is for memories that shouldn't be pinned
+// to one project, and `~` is the broadest store that still corresponds to a
+// real directory Claude Code can be run from.
+const DEFAULTS: Settings = { defaultHoistDir: "~" };
 
 /**
  * Lives beside Claude Code's own state rather than in `~/.config`, so the

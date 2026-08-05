@@ -53,7 +53,7 @@ that matter:
   `~/.claude/projects/<domain>/memory/`. Both ends' `MEMORY.md` indexes are kept
   in sync, and a filename collision is refused rather than overwritten.
 - **Hoist** — the same move in one click, with the destination pre-set to your
-  **default hoist directory** (`~/dev` out of the box, configurable via **⚙**).
+  **default hoist directory** (`~` out of the box, configurable via **⚙**).
   Point it at a broad root so hoisted memories apply across every project
   instead of one.
 - **Delete** — with confirmation, and the dangling entry is stripped from that
@@ -65,7 +65,7 @@ that matter:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Default hoist directory | `~/dev` | The project directory the one-click **Hoist** button targets. `~` is kept as typed. |
+| Default hoist directory | `~` | The project directory the one-click **Hoist** button targets. Kept as typed, so `~` stays `~`. |
 
 The directory is validated when you save — a path that doesn't exist is rejected
 there and then, rather than failing on every later hoist.
