@@ -14,6 +14,16 @@ Every memory is a tile. **Area is token cost** — the bigger the box, the more 
 your context window it spends. **Color is recency** — warm tiles were touched
 recently. Click any tile to read it, then keep, relocate, or delete it.
 
+## Install
+
+**macOS (Apple Silicon):** grab the signed, notarized `.app` from the
+[latest release](https://github.com/johnstonmatt/mem-gui/releases/latest), unzip
+it, and drag `MemGui.app` to `/Applications` (or just double-click it in place)
+— Gatekeeper accepts it as-is, no right-click-to-open workaround needed.
+
+No Deno install required for this path — that's only needed to build from source
+or run in dev mode, covered under [Getting started](#getting-started).
+
 ---
 
 ## Why
