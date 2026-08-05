@@ -175,21 +175,31 @@ export async function scanDomains(): Promise<Domain[]> {
   const projectsDir = `${home}/.claude/projects`;
   const domains: Domain[] = [];
 
+  // Only a missing directory is the normal "nothing here yet" case — a fresh
+  // machine that has never run Claude Code. Anything else is a real fault and
+  // has to surface: a bare `catch { return [] }` here turned a mis-scoped
+  // permission grant in the v0.1.1 release build into a window that opened
+  // cleanly and showed nothing, with no hint anywhere as to why.
   try {
     await Deno.stat(projectsDir);
-  } catch {
-    return [];
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return [];
+    throw error;
   }
 
   for await (const entry of Deno.readDir(projectsDir)) {
     if (!entry.isDirectory) continue;
     const memoryDir = `${projectsDir}/${entry.name}/memory`;
 
+    // Same rule per project: a project with no memory/ dir is ordinary and gets
+    // skipped, but a permission fault must not be mistaken for one — that would
+    // silently drop domains from the treemap.
     try {
       const stat = await Deno.stat(memoryDir);
       if (!stat.isDirectory) continue;
-    } catch {
-      continue;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) continue;
+      throw error;
     }
 
     const domainLabel = await resolveDomainPath(projectsDir, entry.name);
