@@ -70,6 +70,24 @@ that matter:
 The directory is validated when you save — a path that doesn't exist is rejected
 there and then, rather than failing on every later hoist.
 
+A few things worth knowing about that file:
+
+- **It's written only when you save.** Until you change something in **⚙**, no
+  file exists and the app runs on the defaults in `src/settings.ts`.
+- **A missing or malformed file is not an error.** Anything unparseable falls
+  back to defaults silently, so hand-editing it can't lock you out of the app —
+  worst case a bad edit is ignored.
+- **Claude Code does not read it.** It sits in `~/.claude` only so the app's
+  write permission can stay scoped to a single tree (see *Permissions* below).
+  Claude Code loads its config by specific filename — `settings.json`,
+  `CLAUDE.md`, `keybindings.json` — and memory recall only walks
+  `~/.claude/projects/*/memory/*.md`, so `mem-gui.json` is inert to it.
+
+Note that `~` expands to your home directory, whose memory store Claude Code
+only consults when run with your home directory as the cwd. If you always work
+inside `~/dev/...`, point this at `~/dev` instead so hoisted memories actually
+apply across those projects.
+
 ## How it works
 
 Mem GUI is a [Deno desktop](https://docs.deno.com/) app: a native webview window
