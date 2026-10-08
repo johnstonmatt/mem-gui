@@ -2,7 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   Entitlements for the release build. Applied by .github/workflows/release.yml
-  when it re-signs the bundle; `deno desktop` applies none of its own.
+  when it re-signs the bundle; `deno desktop` (as of 2.9.7) applies none of
+  its own to a webview app, and has no setting to make it. Fix #3 in
+  denoland/deno#36421 (open) would have it generate this same single-key plist.
 
   allow-jit is not optional: signing with a real Developer ID turns on the
   Hardened Runtime, and under Hardened Runtime mmap(MAP_JIT) is denied without
@@ -12,7 +14,8 @@
     # Fatal process out of memory: Failed to reserve virtual memory for CodeRange
 
   Verified by A/B on an otherwise identical bundle: without this key the app
-  aborts at V8 init, with it the app starts and serves.
+  aborts at V8 init, with it the app starts and serves. Re-checked on Deno
+  2.9.7 with a real Developer ID: same abort without it.
 
   Kept to this single key deliberately. Every entitlement here weakens the
   Hardened Runtime, so nothing goes in without a demonstrated failure behind it.

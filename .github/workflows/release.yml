@@ -80,9 +80,23 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
+      # Pinned, not v2.x, so the toolchain that builds a release changes only
+      # when someone bumps this and re-checks the steps below against it. A
+      # floating version already changed things here unannounced: v0.1.4 was
+      # built on 2.9.4, and a release on 2.9.7 would have built
+      # dist/MemGui.app.app (see the note on build:mac in deno.jsonc) and failed
+      # every step after the build.
+      #
+      # 2.9.6 fixed two `deno desktop` signing defects (icon copied in after
+      # signing; .update-ok written into the bundle on every launch, which
+      # broke the signature of every shipped copy the first time it was
+      # opened; denoland/deno#36574). The third, the missing JIT entitlement,
+      # is still open in 2.9.7, so "Re-seal bundle" stays. When bumping, check
+      # whether `deno desktop` now attaches allow-jit itself: if "Report
+      # signing state" shows it before the re-seal, that step can go.
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.9.7
 
       - name: Import Developer ID certificate
         if: env.MACOS_CERTIFICATE != ''
@@ -118,44 +132,45 @@ jobs:
       - name: Build
         run: deno task build:mac
 
-      # `deno desktop` copies Contents/Resources/AppIcon.icns into the bundle
-      # *after* it codesigns, so the icon is never sealed into CodeResources and
-      # the signature is genuinely invalid: "a sealed resource is missing or
-      # invalid". Notarization rejects that too, so this isn't cosmetic.
-      # Reproducible locally with a plain ad-hoc `deno task build:mac`, i.e. an
-      # upstream ordering bug rather than anything about this workflow.
-      #
-      # Re-signing the outer bundle regenerates CodeResources over the finished
-      # tree. Deliberately no --deep: the nested Mach-Os (laufey_webview and the
-      # runtime dylib) are already signed and keep their own signatures, which
-      # is also Apple's guidance over --deep.
-      #
-      # The re-sign also attaches entitlements, which `deno desktop` never does.
-      # Signing with a real Developer ID enables the Hardened Runtime, and under
-      # it mmap(MAP_JIT) is denied without com.apple.security.cs.allow-jit, so
-      # V8 can't reserve its executable CodeRange and aborts before the window
-      # opens. That is how v0.1.1 shipped and died on launch:
+      # build:mac passes --output without the extension because Deno 2.9.7
+      # appends ".app" to whatever it's given (see the note in deno.jsonc). If
+      # that changes again the bundle lands somewhere else, and every step below
+      # would fail on a missing path with nothing pointing here, so check once.
+      - name: Check bundle path
+        run: |
+          if [ ! -d "$APP" ]; then
+            echo "::error::Build produced no $APP. Found: $(ls dist)"
+            exit 1
+          fi
+
+      # `deno desktop` signs with the Hardened Runtime and a secure timestamp
+      # for any real identity, which is what notarization needs, but attaches no
+      # entitlements to a webview app, and has no setting to make it. Under the
+      # Hardened Runtime mmap(MAP_JIT) is denied without
+      # com.apple.security.cs.allow-jit, so V8 can't reserve its executable
+      # CodeRange and aborts before the window opens. That is how v0.1.1
+      # shipped and died on launch, and it reproduces on a Deno 2.9.7 build
+      # signed with a real Developer ID:
       #
       #   # Fatal process out of memory: Failed to reserve virtual memory for CodeRange
       #
-      # See .github/entitlements.plist for why that's the only key in there.
+      # Entitlements can only be set by signing, so this re-signs the outer
+      # bundle with them. CFBundleExecutable is laufey_webview, the Mach-O that
+      # hosts V8, so that's where they take effect. Deliberately no --deep: the
+      # runtime dylib keeps the signature deno gave it, which is also Apple's
+      # guidance over --deep. The upstream fix is #3 in denoland/deno#36421.
+      #
+      # This used to also re-seal the icon, which deno copied in after signing;
+      # 2.9.6 fixed that, so ad-hoc builds (no identity configured) skip this
+      # step: there's no Hardened Runtime to work around, and deno's signature
+      # is already valid. See .github/entitlements.plist for why allow-jit is
+      # the only key.
       - name: Re-seal bundle
+        if: env.MACOS_SIGN_IDENTITY != ''
         run: |
-          set -euo pipefail
-
-          if [ -n "$MACOS_SIGN_IDENTITY" ]; then
-            # CFBundleExecutable is laufey_webview, a Mach-O, so signing the
-            # bundle puts these entitlements on the process that hosts V8 —
-            # which is the only place they take effect.
-            codesign --force --options runtime --timestamp \
-              --entitlements .github/entitlements.plist \
-              --sign "$MACOS_SIGN_IDENTITY" "$APP"
-          else
-            # No identity, so deno signed ad-hoc and the Hardened Runtime is
-            # off — no MAP_JIT restriction to work around, and --timestamp
-            # needs a real identity. Match what the build already did.
-            codesign --force --sign - "$APP"
-          fi
+          codesign --force --options runtime --timestamp \
+            --entitlements .github/entitlements.plist \
+            --sign "$MACOS_SIGN_IDENTITY" "$APP"
 
       - name: Verify signature
         run: codesign --verify --deep --strict --verbose=2 "$APP"
@@ -174,15 +189,18 @@ jobs:
           fi
           echo "allow-jit present."
 
-      # Notarization requires Hardened Runtime on every Mach-O in the bundle,
-      # and V8 needs the JIT entitlement once it's on. Whether `deno desktop`
-      # applies either when signing with a real identity is undocumented and
-      # can't be checked locally without a Developer ID, so print it: if the
-      # next step is rejected, this says whether the cause was a missing runtime
-      # flag or entitlement rather than the credentials.
+      # Notarization requires the Hardened Runtime and a secure timestamp on
+      # every Mach-O in the bundle, and V8 needs the JIT entitlement once the
+      # runtime is on. On Deno 2.9.7 with a real Developer ID, deno gives all
+      # three Mach-Os runtime and a timestamp, and the re-seal adds allow-jit to
+      # the bundle and laufey_webview (checked locally). Print it anyway: if
+      # notarization rejects a build, this says whether a runtime flag,
+      # timestamp or entitlement went missing rather than the credentials, and
+      # after a Deno bump it shows whether deno now attaches allow-jit itself.
       - name: Report signing state
         run: |
-          for target in "$APP" "$APP/Contents/MacOS/laufey_webview"; do
+          for target in "$APP" "$APP/Contents/MacOS/laufey_webview" \
+            "$APP/Contents/MacOS/libruntime.dylib"; do
             echo "── $target"
             codesign -dvvv "$target" 2>&1 | grep -E "^(CodeDirectory|Identifier|TeamIdentifier|Timestamp)" || true
             codesign -d --entitlements - --xml "$target" 2>/dev/null || true
