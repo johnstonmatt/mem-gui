@@ -16,9 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned, and to the same version release.yml builds with: see the note
+      # there on why a floating v2.x would change the release build underneath us.
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.9.7
 
       # Kept as separate steps rather than `deno task checks` so a failure names
       # which check broke without having to open the log.

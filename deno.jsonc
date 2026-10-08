@@ -7,9 +7,9 @@
   // Load-bearing, not just bookkeeping: `deno desktop` bakes this into the
   // built dylib and exposes it as `Deno.desktopVersion`, which is the value
   // Deno.autoUpdate() compares against latest.json to decide whether to patch.
-  // It does *not* reach Info.plist — CFBundleShortVersionString is hardcoded to
-  // "1.0" and CFBundleVersion to "1.0.0" with no config key to override them,
-  // so what Finder's Get Info shows is frozen regardless of what's here.
+  // As of Deno 2.9.7 it also reaches Info.plist, as CFBundleShortVersionString
+  // and CFBundleVersion, so it's what Finder's Get Info shows too. (Through
+  // 2.9.4 those were hardcoded to "1.0" and "1.0.0".)
   "version": "0.1.4", // x-release-please-version
   "tasks": {
     "dev": "deno desktop --hmr --allow-read=$HOME --allow-write=$HOME/.claude,$HOME/dev --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS --allow-net=127.0.0.1 main.ts",
@@ -26,7 +26,13 @@
     // main.ts gates every filesystem action on the path living inside the
     // managed memory store, and move/hoist accept any directory on disk by
     // design, so no compile-time path set could describe them anyway.
-    "build:mac": "deno desktop --output dist/MemGui.app --allow-read --allow-write --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS --allow-net=127.0.0.1 main.ts",
+    //
+    // --output names the bundle without its extension. Deno 2.9.7 appends
+    // ".app" even when the path already ends in it (dist/MemGui.app becomes
+    // dist/MemGui.app.app), despite its help text showing "MyApp.app". Given
+    // the bare name, both that and a fixed version produce dist/MemGui.app,
+    // which is the path .github/workflows/release.yml expects.
+    "build:mac": "deno desktop --output dist/MemGui --allow-read --allow-write --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS --allow-net=127.0.0.1 main.ts",
     "fmt": "deno fmt",
     "lint": "deno lint",
     // One-time interactive setup for the release workflow's Apple secrets. The
