@@ -12,10 +12,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Every release must be Developer ID signed and notarized: an ad-hoc build
+  # downloads quarantined, Gatekeeper rejects it, and the in-app updater
+  # refuses to install it. This runs before release-please rather than in
+  # build-macos because by the time build-macos starts, the tag and GitHub
+  # release already exist, so failing there would leave a published release
+  # with no asset. Failing here means no release PR, and so no release, until
+  # `deno task setup:release` has stored the secrets.
+  #
+  # MACOS_CERTIFICATE_PASSWORD isn't checked: a .p12 exported without a
+  # password is valid, and Actions can't tell an empty secret from a missing
+  # one. A missing password for a .p12 that has one still fails the build, at
+  # "Import Developer ID certificate", before anything is signed or uploaded.
+  signing-secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require Apple signing secrets
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          missing=()
+          for name in MACOS_CERTIFICATE MACOS_SIGN_IDENTITY APPLE_API_KEY \
+            APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing secrets: ${missing[*]}. Releases must be signed and notarized; run deno task setup:release."
+            exit 1
+          fi
+          echo "Signing secrets are set."
+
   # Keeps a "chore(main): release x.y.z" PR open and up to date with every
   # conventional commit that lands on main. Merging that PR is the release:
   # it bumps deno.jsonc, writes CHANGELOG.md, tags, and cuts the GitHub
-  # release — which is what triggers the build below.
+  # release, which is what triggers the build below.
   #
   # release-please-config.json is strict JSON and can't explain itself, so:
   # release-type is "go" purely because that strategy writes no version file
@@ -36,6 +70,7 @@ jobs:
   # defaults to 1.0.0. Without this the first release would ship as 1.0.0 no
   # matter what the commits or the manifest say.
   release-please:
+    needs: signing-secrets
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -47,9 +82,13 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
-          # GITHUB_TOKEN works, but PRs opened with it don't trigger other
-          # workflows, so ci.yml never runs on the release PR. Set a PAT with
-          # repo scope as RELEASE_PLEASE_TOKEN to get checks on it.
+          # GITHUB_TOKEN works, but CI runs on a release PR it opens or updates
+          # are triggered by github-actions[bot], and GitHub holds those as
+          # "action required" until someone approves them. Setting
+          # RELEASE_PLEASE_TOKEN makes release-please act as that token's owner
+          # instead, so CI runs without approval. Use a fine-grained PAT for
+          # this repo only, with read and write access to Contents, Pull
+          # requests and Issues (Issues is for the release labels).
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
   # macOS-only because `deno desktop` builds the .app with the platform's own
@@ -62,11 +101,9 @@ jobs:
       contents: write
     env:
       APP: dist/MemGui.app
-      # These are empty until the Apple Developer secrets are configured, and
-      # every signing step below is skipped when they are — the build still
-      # produces a runnable ad-hoc signed .app, it just trips Gatekeeper once
-      # downloaded. That way the release pipeline works before the paid
-      # developer account does.
+      # All guaranteed non-empty by signing-secrets, so no step below is
+      # conditional on them: a release is signed, notarized and passes
+      # Gatekeeper, or the job fails and nothing is uploaded.
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
@@ -74,7 +111,7 @@ jobs:
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
     steps:
-      # Build the tag, not the branch head — another push can land on main
+      # Build the tag, not the branch head: another push can land on main
       # between the release commit and this job starting.
       - uses: actions/checkout@v4
         with:
@@ -84,8 +121,11 @@ jobs:
         with:
           deno-version: v2.x
 
+      # Test the exact commit being shipped before signing anything.
+      - name: Checks
+        run: deno task checks
+
       - name: Import Developer ID certificate
-        if: env.MACOS_CERTIFICATE != ''
         run: |
           set -euo pipefail
           KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
@@ -109,93 +149,59 @@ jobs:
 
           rm "$RUNNER_TEMP/cert.p12"
 
-      - name: Set signing identity
-        if: env.MACOS_SIGN_IDENTITY != ''
-        run: |
-          deno run --allow-read=deno.jsonc --allow-write=deno.jsonc \
-            scripts/set_codesign_identity.ts "$MACOS_SIGN_IDENTITY"
-
-      - name: Build
-        run: deno task build:mac
-
-      # `deno desktop` copies Contents/Resources/AppIcon.icns into the bundle
-      # *after* it codesigns, so the icon is never sealed into CodeResources and
-      # the signature is genuinely invalid: "a sealed resource is missing or
-      # invalid". Notarization rejects that too, so this isn't cosmetic.
-      # Reproducible locally with a plain ad-hoc `deno task build:mac`, i.e. an
-      # upstream ordering bug rather than anything about this workflow.
-      #
-      # Re-signing the outer bundle regenerates CodeResources over the finished
-      # tree. Deliberately no --deep: the nested Mach-Os (laufey_webview and the
-      # runtime dylib) are already signed and keep their own signatures, which
-      # is also Apple's guidance over --deep.
-      #
-      # The re-sign also attaches entitlements, which `deno desktop` never does.
-      # Signing with a real Developer ID enables the Hardened Runtime, and under
-      # it mmap(MAP_JIT) is denied without com.apple.security.cs.allow-jit, so
-      # V8 can't reserve its executable CodeRange and aborts before the window
-      # opens. That is how v0.1.1 shipped and died on launch:
-      #
-      #   # Fatal process out of memory: Failed to reserve virtual memory for CodeRange
-      #
-      # See .github/entitlements.plist for why that's the only key in there.
-      - name: Re-seal bundle
-        run: |
-          set -euo pipefail
-
-          if [ -n "$MACOS_SIGN_IDENTITY" ]; then
-            # CFBundleExecutable is laufey_webview, a Mach-O, so signing the
-            # bundle puts these entitlements on the process that hosts V8 —
-            # which is the only place they take effect.
-            codesign --force --options runtime --timestamp \
-              --entitlements .github/entitlements.plist \
-              --sign "$MACOS_SIGN_IDENTITY" "$APP"
-          else
-            # No identity, so deno signed ad-hoc and the Hardened Runtime is
-            # off — no MAP_JIT restriction to work around, and --timestamp
-            # needs a real identity. Match what the build already did.
-            codesign --force --sign - "$APP"
-          fi
+      # Builds, writes the version into Info.plist, adds the installer the
+      # in-app updater runs, and re-signs the bundle with the Hardened Runtime,
+      # a secure timestamp and .github/entitlements.plist.
+      - name: Build and sign
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: deno task package:mac
 
       - name: Verify signature
         run: codesign --verify --deep --strict --verbose=2 "$APP"
 
-      # A silently-empty --entitlements would ship another build that dies at
-      # V8 init, and neither codesign nor notarization would object. Assert the
-      # entitlement is really in the signature rather than trusting the flag.
+      # Without allow-jit, V8 can't reserve its CodeRange under the Hardened
+      # Runtime and the app aborts at launch. Neither codesign nor notarization
+      # objects if it's missing, so assert it's really in the signature.
       - name: Verify JIT entitlement
-        if: env.MACOS_SIGN_IDENTITY != ''
         run: |
           set -euo pipefail
           if ! codesign -d --entitlements - --xml "$APP" 2>/dev/null \
             | grep -q "com.apple.security.cs.allow-jit"; then
-            echo "::error::allow-jit missing from the signed bundle — V8 would abort at launch."
+            echo "::error::allow-jit missing from the signed bundle; V8 would abort at launch."
             exit 1
           fi
           echo "allow-jit present."
 
-      # Notarization requires Hardened Runtime on every Mach-O in the bundle,
-      # and V8 needs the JIT entitlement once it's on. Whether `deno desktop`
-      # applies either when signing with a real identity is undocumented and
-      # can't be checked locally without a Developer ID, so print it: if the
-      # next step is rejected, this says whether the cause was a missing runtime
-      # flag or entitlement rather than the credentials.
+      # The updater checks a download's version here before installing it.
+      - name: Verify bundle version
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.release-please.outputs.tag_name }}"
+          ACTUAL="$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")"
+          if [ "$ACTUAL" != "${TAG#v}" ]; then
+            echo "::error::Info.plist says $ACTUAL, release is ${TAG#v}."
+            exit 1
+          fi
+          test -f "$APP/Contents/Resources/install.zsh"
+
+      # If notarization rejects a build, this says whether the runtime flag,
+      # timestamp or entitlements went missing rather than the credentials.
       - name: Report signing state
         run: |
           for target in "$APP" "$APP/Contents/MacOS/laufey_webview"; do
             echo "── $target"
-            codesign -dvvv "$target" 2>&1 | grep -E "^(CodeDirectory|Identifier|TeamIdentifier|Timestamp)" || true
+            codesign -dvvv "$target" 2>&1 | grep -E "^(CodeDirectory|Identifier|TeamIdentifier|Timestamp|Authority)" || true
             codesign -d --entitlements - --xml "$target" 2>/dev/null || true
             echo
           done
 
       - name: Notarize and staple
-        if: env.APPLE_API_KEY != ''
         run: |
           set -euo pipefail
           echo "$APPLE_API_KEY" | base64 --decode > "$RUNNER_TEMP/api-key.p8"
 
-          # notarytool won't take a bundle directory — the zip is purely a
+          # notarytool won't take a bundle directory; the zip is purely a
           # transport for the submission.
           ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
           xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
@@ -210,7 +216,6 @@ jobs:
           rm "$RUNNER_TEMP/api-key.p8"
 
       - name: Verify Gatekeeper acceptance
-        if: env.APPLE_API_KEY != ''
         run: spctl --assess --type execute --verbose=4 "$APP"
 
       - name: Package
@@ -218,7 +223,8 @@ jobs:
           set -euo pipefail
           # ditto, not `zip`: it preserves the symlinks and extended attributes
           # inside a .app bundle that the signature is computed over.
-          ASSET="MemGui-${{ needs.release-please.outputs.tag_name }}-macos-arm64.zip"
+          ARCH="$(uname -m)"
+          ASSET="MemGui-${{ needs.release-please.outputs.tag_name }}-macos-$ARCH.zip"
           ditto -c -k --keepParent "$APP" "$ASSET"
           echo "ASSET=$ASSET" >> "$GITHUB_ENV"
 

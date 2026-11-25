@@ -90,7 +90,8 @@ body {
   background-color: #9aa0a6;
 }
 
-#refresh-btn {
+#refresh-btn,
+#settings-btn {
   background: none;
   border: 1px solid #3a3d42;
   color: #e6e6e6;
@@ -101,7 +102,8 @@ body {
   flex: none;
 }
 
-#refresh-btn:hover {
+#refresh-btn:hover,
+#settings-btn:hover {
   background: #2c2f34;
 }
 
@@ -579,6 +581,82 @@ body {
 
 #detail-meta .detail-scope {
   color: #6b7076;
+}
+
+/* --- settings dialog ------------------------------------------------------- */
+
+#settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+#settings-dialog {
+  width: 440px;
+  max-width: calc(100vw - 40px);
+  padding: 16px;
+  border: 1px solid #3a3d42;
+  border-radius: 6px;
+  background: #232529;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#settings-dialog h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.settings-hint {
+  font-size: 11px;
+  color: #6b7076;
+  line-height: 1.5;
+  margin: 0;
+}
+
+#updates {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#updates h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+#updates-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#updates-actions button {
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid #3a3d42;
+  background: #2c2f34;
+  color: #e6e6e6;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#updates-actions button:hover:not(:disabled) {
+  background: #34373d;
+}
+
+#updates-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#updates-status.error {
+  color: #ff8a8a;
 }
 
 .hidden {

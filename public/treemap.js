@@ -814,6 +814,97 @@ document.getElementById("move-confirm-btn").addEventListener("click", () => {
   moveMemory(file, { kind: "store", storeId }, label);
 });
 
+// --- settings ----------------------------------------------------------------
+
+const settingsOverlay = document.getElementById("settings-overlay");
+
+function openSettings() {
+  settingsOverlay.classList.remove("hidden");
+}
+
+function closeSettings() {
+  settingsOverlay.classList.add("hidden");
+}
+
+document.getElementById("settings-btn").addEventListener("click", openSettings);
+
+// Clicking the backdrop dismisses, but clicks inside the dialog must not — they
+// bubble up to the overlay too.
+settingsOverlay.addEventListener("click", (e) => {
+  if (e.target === settingsOverlay) closeSettings();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !settingsOverlay.classList.contains("hidden")) {
+    closeSettings();
+  }
+});
+
+// --- updates -----------------------------------------------------------------
+
+const checkUpdatesBtn = document.getElementById("check-updates-btn");
+const installUpdateBtn = document.getElementById("install-update-btn");
+const updatesSpinner = document.getElementById("updates-spinner");
+const updatesStatusEl = document.getElementById("updates-status");
+
+const updates = { busy: false, available: null };
+
+function renderUpdates(text, { error = false } = {}) {
+  if (text !== undefined) {
+    updatesStatusEl.textContent = text;
+    updatesStatusEl.classList.toggle("error", error);
+  }
+  checkUpdatesBtn.disabled = updates.busy;
+  installUpdateBtn.disabled = updates.busy;
+  installUpdateBtn.classList.toggle("hidden", updates.available === null);
+  updatesSpinner.classList.toggle("hidden", !updates.busy);
+}
+
+async function checkForUpdates() {
+  if (updates.busy) return;
+  updates.busy = true;
+  updates.available = null;
+  renderUpdates("Checking for updates…");
+  try {
+    const result = await callBinding("checkForUpdates");
+    updates.available = result.availableVersion;
+    renderUpdates(
+      result.availableVersion
+        ? `${result.message} Installing restarts Mem GUI.`
+        : result.message,
+    );
+  } catch (err) {
+    renderUpdates(`Couldn't check for updates: ${err}`, { error: true });
+  } finally {
+    updates.busy = false;
+    renderUpdates();
+  }
+}
+
+async function installUpdate() {
+  if (updates.busy || updates.available === null) return;
+  updates.busy = true;
+  renderUpdates("Downloading and verifying the latest release…");
+  try {
+    // On success the app exits moments after this returns, and the installer
+    // relaunches the new version.
+    renderUpdates(await callBinding("installUpdate"));
+  } catch (err) {
+    updates.busy = false;
+    renderUpdates(`Couldn't install the update: ${err}`, { error: true });
+  }
+}
+
+checkUpdatesBtn.addEventListener("click", checkForUpdates);
+installUpdateBtn.addEventListener("click", installUpdate);
+renderUpdates("Check for the latest release of Mem GUI.");
+
+// Called by main.ts for the "Check for Updates…" menu item.
+globalThis.checkForUpdatesFromMenu = () => {
+  openSettings();
+  checkForUpdates();
+};
+
 // --- bootstrap ---------------------------------------------------------------
 
 function computeMinMax() {

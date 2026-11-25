@@ -17,6 +17,7 @@ import {
 } from "./src/hoist.ts";
 import { addToIndex, indexLine, removeFromIndex } from "./src/memory_index.ts";
 import { storeContaining } from "./src/homes.ts";
+import { checkForUpdates, installLatest } from "./src/update.ts";
 // Static assets are pulled in as text modules (stable since Deno 2.8) so
 // `deno desktop` embeds them in the module graph like any other import —
 // reading them via Deno.readFile at runtime doesn't work, since the
@@ -71,6 +72,66 @@ const win = new Deno.BrowserWindow({
 win.addEventListener("close", () => {
   win.close();
   Deno.exit(0);
+});
+
+// Setting a menu replaces deno desktop's default one, so the standard app,
+// Edit and Window items are spelled out: without the Edit roles, Cmd-C/V stop
+// working in text fields.
+win.setApplicationMenu([
+  {
+    submenu: {
+      label: "Mem GUI",
+      items: [
+        { role: { role: "about" } },
+        {
+          item: {
+            label: "Check for Updates…",
+            id: "check-for-updates",
+            enabled: true,
+          },
+        },
+        "separator",
+        { role: { role: "hide" } },
+        { role: { role: "hideOthers" } },
+        { role: { role: "unhide" } },
+        "separator",
+        { role: { role: "quit" } },
+      ],
+    },
+  },
+  {
+    submenu: {
+      label: "Edit",
+      items: [
+        { role: { role: "undo" } },
+        { role: { role: "redo" } },
+        "separator",
+        { role: { role: "cut" } },
+        { role: { role: "copy" } },
+        { role: { role: "paste" } },
+        { role: { role: "selectAll" } },
+      ],
+    },
+  },
+  {
+    submenu: {
+      label: "Window",
+      items: [
+        { role: { role: "minimize" } },
+        { role: { role: "zoom" } },
+        "separator",
+        { role: { role: "front" } },
+      ],
+    },
+  },
+]);
+
+// The update controls live in the page's settings dialog; the menu item opens
+// them and starts a check.
+win.addEventListener("menuclick", (event) => {
+  if (event.detail.id === "check-for-updates") {
+    win.executeJs("globalThis.checkForUpdatesFromMenu?.()");
+  }
 });
 
 // win.bind()'s generic signature expects loosely-typed JSON args/return
@@ -211,6 +272,20 @@ win.bind(
   (async () => {
     await repairWiring();
     return scanDomains();
+  }) as never,
+);
+
+win.bind("checkForUpdates", (() => checkForUpdates()) as never);
+
+// Resolves once the downloaded release's installer is running. The app then
+// exits so the installer can replace it; the delay lets this reply reach the
+// page first.
+win.bind(
+  "installUpdate",
+  (async () => {
+    const message = await installLatest();
+    setTimeout(() => Deno.exit(0), 500);
+    return message;
   }) as never,
 );
 

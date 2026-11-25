@@ -567,7 +567,8 @@ async function main(): Promise<void> {
   heading("Done");
   note("Optional, and not something this script can do for you:");
   note(
-    "  • RELEASE_PLEASE_TOKEN — a PAT with repo scope, so CI runs on release PRs.",
+    "  • RELEASE_PLEASE_TOKEN — a fine-grained PAT for this repo (Contents, Pull requests\n" +
+      "    and Issues: read and write), so CI runs on release PRs without needing approval.",
   );
   out("\n");
 
