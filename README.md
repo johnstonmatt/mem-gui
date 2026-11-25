@@ -24,6 +24,14 @@ it, and drag `MemGui.app` to `/Applications` (or just double-click it in place)
 No Deno install required for this path — that's only needed to build from source
 or run in dev mode, covered under [Getting started](#getting-started).
 
+### Updating
+
+**⚙ → Check for Updates…** (also in the **Mem GUI** menu) compares your version
+with the latest GitHub release. **Install update** downloads it, checks that
+it's the expected version and that it's Developer ID signed and notarized, then
+quits Mem GUI, replaces `/Applications/MemGui.app`, and relaunches it. Releases
+before 0.2 have no updater, so install the first one with it by hand.
+
 ---
 
 ## Why
@@ -215,9 +223,14 @@ rescan.
 ### Build a standalone macOS app
 
 ```bash
-deno task build:mac
-# → dist/MemGui.app
+deno task package:mac   # → dist/MemGui.app, ad-hoc signed
+deno task install       # build, then install to /Applications
 ```
+
+`package:mac` runs `scripts/package_app.zsh`: `deno desktop` builds the app
+(`deno task build:mac`), then the script writes the version into `Info.plist`,
+adds the installer the updater runs, and re-signs the bundle. Set
+`CODESIGN_IDENTITY` to a Developer ID to sign it as a release is signed.
 
 ### Checks
 
@@ -242,8 +255,30 @@ warning below.
 > their assertions to keep the rule simple. Verified against deno 2.9.0 / laufey
 > 0.4.0.
 
-`deno task build:mac` is deliberately not in CI: it needs macOS and downloads
-the experimental `deno desktop` runtime.
+A second CI job packages the app on macOS, ad-hoc signed, and verifies the
+bundle, so a broken build is caught on the PR rather than at release.
+
+## Releases
+
+Releases are built by GitHub Actions and published as a Developer ID signed,
+notarized `.app` zip on the GitHub release.
+
+- `.github/workflows/release.yml` uses
+  [release-please](https://github.com/googleapis/release-please). It keeps a
+  release PR open from
+  [conventional commits](https://www.conventionalcommits.org) on `main`
+  (`feat:`, `fix:` and so on). Merging that PR bumps the version in
+  `deno.jsonc`, updates `CHANGELOG.md`, tags the release, then tests, builds,
+  signs, notarizes and attaches the app.
+- The version comes from the commits: `fix:` bumps the patch, `feat:` the minor.
+  Before 1.0, breaking changes (`feat!:` or a `BREAKING CHANGE:` footer) bump
+  the minor too, because of `bump-minor-pre-major`. To choose a version
+  yourself, such as 1.0.0, add a `Release-As: 1.0.0` footer to a commit that
+  lands on `main`, and the release PR switches to that version.
+- The release workflow refuses to run until the Apple signing secrets are set.
+  Run `deno task setup:release` once (needs the `gh` CLI). It checks your
+  Developer ID `.p12` and App Store Connect API key with the same tools CI uses
+  before storing them as repository secrets.
 
 ## Permissions
 
@@ -255,7 +290,7 @@ the experimental `deno desktop` runtime.
 | Write | `$HOME`                                   | memory stores and instruction files in any agent folder, and Integrate |
 | Env   | `HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` | find agent folders                                                     |
 | Run   | `open`, `claude`                          | reveal/open files, and the read-only integrate proposal                |
-| Net   | `127.0.0.1`                               | serve the local page to the webview                                    |
+| Net   | `127.0.0.1`, `api.github.com`             | serve the local page to the webview, and check for updates             |
 
 **The built app can't scope the filesystem grants that way, and doesn't pretend
 to.** Deno bakes permission paths into the binary at build time, with `$HOME`
@@ -266,6 +301,12 @@ runtime-resolved form: `--allow-read=~/x` is stored literally and never
 expanded, granting nothing. So `build:mac` uses unscoped `--allow-read` and
 `--allow-write`, and keeps the narrow `--allow-run` / `--allow-env` /
 `--allow-net` grants, which don't depend on paths.
+
+The built app also has the updater's grants: network access to `api.github.com`,
+`github.com` and `release-assets.githubusercontent.com`, and permission to run
+`ditto`, `codesign`, `spctl`, `plutil` and `zsh`, which runs the downloaded
+release's installer. Running `zsh` amounts to running anything, which unscoped
+`--allow-write` already allows.
 
 That costs less than it sounds, because the path scoping was never the control:
 **`main.ts` gates every memory action on the path living directly inside a known
@@ -286,6 +327,7 @@ src/
   migrate.ts         # integrate (LLM-assisted) and move (deterministic) flows
   hoist.ts           # the shared instructions file and every agent's pointer to it
   paths.ts           # store naming, repo/worktree roots, directory validation
+  update.ts          # check GitHub for a release, download, verify, hand off to install.zsh
   types.ts           # Domain / MemoryFile / StoreScope shapes
   *_test.ts          # unit tests, run against a throwaway $HOME
   test_helpers.ts    # temp-HOME harness + minimal assertions
@@ -295,15 +337,17 @@ public/
   tree.js            # the ~ tree: nesting by folder, which stores are striped
   treemap.js         # squarified layout, inspect panel, hoist + move UI
 scripts/
+  package_app.zsh    # build, set the Info.plist version, add install.zsh, re-sign
+  install.zsh        # install a built app to /Applications; ships inside the app
   setup_release.ts   # interactive one-time setup of the Apple release secrets
-  set_codesign_identity.ts  # swaps in the real Developer ID at release time
+  set_codesign_identity.ts  # swaps in the real Developer ID for signed builds
 deno.jsonc           # version, tasks, desktop config, permission scopes
 release-please-config.json  # conventional-commits -> release PRs
 .github/
   entitlements.plist # allow-jit — V8 can't start under Hardened Runtime without it
   workflows/
-    ci.yml           # fmt, lint, type check, tests, no-remote-deps guard
-    release.yml      # release PR, then build + sign + notarize the .app
+    ci.yml           # fmt, lint, type check, tests, no-remote-deps guard, package
+    release.yml      # release PR, then test + build + sign + notarize the .app
 ```
 
 ## License

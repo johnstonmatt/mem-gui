@@ -46,5 +46,27 @@ jobs:
           fi
           echo "No remote imports."
 
-# Not built here: `deno task build:mac` needs macOS and downloads the
-# experimental `deno desktop` webview runtime, so it stays a local step.
+  # The same packaging the release uses, ad-hoc signed, so a broken bundle,
+  # plist or installer is caught on the PR rather than after a release is cut.
+  package:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Package app
+        run: deno task package:mac
+
+      - name: Verify bundle
+        run: |
+          set -euo pipefail
+          APP=dist/MemGui.app
+          plutil -lint "$APP/Contents/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          test -f "$APP/Contents/Resources/install.zsh"
+
+      - name: Shell scripts parse
+        run: for f in scripts/*.zsh; do zsh -n "$f"; done
