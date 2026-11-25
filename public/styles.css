@@ -27,26 +27,33 @@ body {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   overflow: hidden;
   white-space: nowrap;
+  /* Lets the first crumb's padding sit flush with the bar's own. */
+  margin-left: -8px;
 }
 
 .breadcrumb-sep {
   color: #45484e;
 }
 
+/* Crumbs are padded blocks nearly the bar's height, so they're easy to hit. */
+.breadcrumb-link,
+.breadcrumb-active {
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
 .breadcrumb-link {
   cursor: pointer;
   color: #9aa0a6;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  transition: color 0.1s ease, text-decoration-color 0.1s ease;
+  transition: color 0.1s ease, background-color 0.1s ease;
 }
 
 .breadcrumb-link:hover {
-  color: #c7cad0;
-  text-decoration-color: #6b7076;
+  color: #e6e6e6;
+  background: #2c2f34;
 }
 
 .breadcrumb-active {
@@ -75,8 +82,15 @@ body {
   display: none;
 }
 
-#refresh-btn,
-#settings-btn {
+.legend-invalid {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+  background-color: #9aa0a6;
+}
+
+#refresh-btn {
   background: none;
   border: 1px solid #3a3d42;
   color: #e6e6e6;
@@ -87,8 +101,7 @@ body {
   flex: none;
 }
 
-#refresh-btn:hover,
-#settings-btn:hover {
+#refresh-btn:hover {
   background: #2c2f34;
 }
 
@@ -154,6 +167,24 @@ body {
   filter: brightness(1.15);
   outline: 1px solid #fff;
   outline-offset: -1px;
+}
+
+/* A store with stores inside its folder: its memories never reach them. */
+.file-leaf.invalid,
+.legend-invalid {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(0, 0, 0, 0.32) 0 4px,
+    transparent 4px 9px
+  );
+}
+
+.domain-box.invalid {
+  border-style: dashed;
+}
+
+.domain-box.root-box {
+  border-color: #5a5e66;
 }
 
 .file-leaf.is-index {
@@ -362,7 +393,7 @@ body {
   flex: 1;
 }
 
-/* --- shared form controls (move panel + settings dialog) ------------------- */
+/* --- shared form controls (move panel) ------------------------------------ */
 
 .field-label {
   font-size: 11px;
@@ -370,8 +401,7 @@ body {
 }
 
 #move-dest,
-#move-dest-dir,
-#settings-hoist-dir {
+#move-dest-dir {
   width: 100%;
   padding: 6px 8px;
   border-radius: 4px;
@@ -382,14 +412,12 @@ body {
   font-family: inherit;
 }
 
-#move-dest-dir,
-#settings-hoist-dir {
+#move-dest-dir {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 #move-dest:focus,
-#move-dest-dir:focus,
-#settings-hoist-dir:focus {
+#move-dest-dir:focus {
   outline: none;
   border-color: #6b7076;
 }
@@ -438,64 +466,103 @@ body {
   background: #34373d;
 }
 
-/* --- settings dialog ------------------------------------------------------- */
+/* --- hoist panel ------------------------------------------------------------ */
 
-#settings-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10;
-}
-
-#settings-dialog {
-  width: 440px;
-  max-width: calc(100vw - 40px);
-  padding: 16px;
+#hoist-panel {
+  margin-top: 10px;
+  padding: 10px;
   border: 1px solid #3a3d42;
-  border-radius: 6px;
-  background: #232529;
+  border-radius: 4px;
+  background: #1b1d21;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-#settings-dialog h2 {
-  margin: 0 0 4px;
-  font-size: 15px;
+#hoist-details {
+  font-size: 11px;
+  color: #9aa0a6;
 }
 
-.settings-hint {
+#hoist-details summary {
+  cursor: pointer;
+}
+
+#hoist-files {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  line-height: 1.6;
+}
+
+#hoist-files code {
+  font-size: 10px;
+  word-break: break-all;
+}
+
+#hoist-confirm-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#hoist-problems,
+#detail-wiring-text {
+  font-size: 11px;
+  color: #ffb36b;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+#detail-wiring {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#repair-btn {
+  align-self: flex-start;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #3a3d42;
+  background: #2c2f34;
+  color: #e6e6e6;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#undo-btn {
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #3a3d42;
+  background: #2c2f34;
+  color: #e6e6e6;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+#integrate-proposal-also {
+  font-size: 11px;
+  color: #9aa0a6;
+  line-height: 1.5;
+}
+
+#hoist-note {
   font-size: 11px;
   color: #6b7076;
   line-height: 1.5;
   margin: 0;
 }
 
-.settings-hint code {
+#hoist-note code {
   font-size: 10px;
-  word-break: break-all;
 }
 
-#settings-status {
-  font-size: 11px;
-  color: #9aa0a6;
-  line-height: 1.5;
-  min-height: 1em;
-}
-
-#settings-status.error {
-  color: #ff8a8a;
-}
-
-#settings-actions {
+#hoist-actions {
   display: flex;
   gap: 8px;
 }
 
-#settings-actions button {
+#hoist-actions button {
   flex: 1;
   padding: 6px 8px;
   border-radius: 4px;
@@ -506,8 +573,12 @@ body {
   cursor: pointer;
 }
 
-#settings-actions button:hover {
+#hoist-actions button:hover {
   background: #34373d;
+}
+
+#detail-meta .detail-scope {
+  color: #6b7076;
 }
 
 .hidden {

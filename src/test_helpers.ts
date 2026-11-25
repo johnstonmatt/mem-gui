@@ -23,23 +23,32 @@ export function assertIncludes(haystack: string, needle: string): void {
   }
 }
 
+/** Variables that point agents at other config folders; cleared per test. */
+const AGENT_ENV = ["CLAUDE_CONFIG_DIR", "CODEX_HOME"];
+
 /**
- * Every module here derives its paths from $HOME, so tests run against a
- * throwaway one instead of the real memory store. HOME is process-wide, so this
- * restores it afterwards — `deno test` runs test modules in one process, and a
- * leaked HOME would quietly point later tests at a deleted directory.
+ * Every module here derives its paths from $HOME (and the agent config-folder
+ * variables), so tests run against a throwaway home with those cleared. The
+ * environment is process-wide, so it's restored afterwards.
  */
 export async function withTempHome(
   fn: (home: string) => Promise<void>,
 ): Promise<void> {
-  const original = Deno.env.get("HOME");
-  const home = await Deno.makeTempDir({ prefix: "mem-gui-test-" });
+  const names = ["HOME", ...AGENT_ENV];
+  const original = new Map(names.map((n) => [n, Deno.env.get(n)]));
+  // realPath: macOS temp dirs sit behind the /var -> /private/var symlink.
+  const home = await Deno.realPath(
+    await Deno.makeTempDir({ prefix: "mem-gui-test-" }),
+  );
   Deno.env.set("HOME", home);
+  for (const name of AGENT_ENV) Deno.env.delete(name);
   try {
     await fn(home);
   } finally {
-    if (original === undefined) Deno.env.delete("HOME");
-    else Deno.env.set("HOME", original);
+    for (const [name, value] of original) {
+      if (value === undefined) Deno.env.delete(name);
+      else Deno.env.set(name, value);
+    }
     await Deno.remove(home, { recursive: true }).catch(() => {});
   }
 }

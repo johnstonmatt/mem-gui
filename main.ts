@@ -6,7 +6,17 @@ import {
   writeIntegration,
   writeMovedMemory,
 } from "./src/migrate.ts";
-import { readSettings, type Settings, writeSettings } from "./src/settings.ts";
+import {
+  hoistMemory,
+  type HoistUndo,
+  planHoist,
+  removeSharedInstruction,
+  repairWiring,
+  sharedFilePath,
+  undoHoist,
+} from "./src/hoist.ts";
+import { addToIndex, indexLine, removeFromIndex } from "./src/memory_index.ts";
+import { storeContaining } from "./src/homes.ts";
 // Static assets are pulled in as text modules (stable since Deno 2.8) so
 // `deno desktop` embeds them in the module graph like any other import —
 // reading them via Deno.readFile at runtime doesn't work, since the
@@ -15,6 +25,7 @@ import { readSettings, type Settings, writeSettings } from "./src/settings.ts";
 import indexHtml from "./public/index.html" with { type: "text" };
 import stylesCss from "./public/styles.css" with { type: "text" };
 import treemapJs from "./public/treemap.js" with { type: "text" };
+import treeJs from "./public/tree.js" with { type: "text" };
 
 const ASSETS: Record<string, { body: string; contentType: string }> = {
   "/": { body: indexHtml, contentType: "text/html; charset=utf-8" },
@@ -24,64 +35,19 @@ const ASSETS: Record<string, { body: string; contentType: string }> = {
     body: treemapJs,
     contentType: "text/javascript; charset=utf-8",
   },
+  "/tree.js": { body: treeJs, contentType: "text/javascript; charset=utf-8" },
 };
 
-/** Guard against acting on anything outside the memory store we scanned. */
-function assertManagedPath(path: string) {
-  const home = Deno.env.get("HOME") ?? "";
-  const root = `${home}/.claude/projects/`;
-  if (!path.startsWith(root) || !path.endsWith(".md")) {
+/** Guard against acting on anything but a file directly inside a known store. */
+async function assertManagedPath(path: string) {
+  if (!await storeContaining(path)) {
     throw new Error(`Refusing to act on path outside memory store: ${path}`);
   }
 }
 
-/**
- * Deleting a memory file leaves a dangling link in that domain's MEMORY.md
- * index otherwise — strip the line pointing at it (matched by the markdown
- * link target, e.g. "(architecture_mem_gui.md)") so the index doesn't rot.
- */
-async function removeFromIndex(deletedPath: string) {
-  const filename = deletedPath.slice(deletedPath.lastIndexOf("/") + 1);
-  if (filename === "MEMORY.md") return;
-
-  const dir = deletedPath.slice(0, deletedPath.lastIndexOf("/"));
-  const indexPath = `${dir}/MEMORY.md`;
-  const marker = `(${filename})`;
-
-  let content: string;
-  try {
-    content = await Deno.readTextFile(indexPath);
-  } catch {
-    return;
-  }
-
-  const lines = content.split("\n");
-  const filtered = lines.filter((line) => !line.includes(marker));
-  if (filtered.length !== lines.length) {
-    await Deno.writeTextFile(indexPath, filtered.join("\n"));
-  }
-}
-
-/** The symmetric counterpart to removeFromIndex, for adding a hoisted memory's entry at its new home. */
-async function addToIndex(
-  memoryDir: string,
-  filename: string,
-  name: string,
-  description: string,
-) {
-  const indexPath = `${memoryDir}/MEMORY.md`;
-  const line = `- [${name}](${filename}) — ${description}`;
-
-  let existing = "";
-  try {
-    existing = await Deno.readTextFile(indexPath);
-  } catch {
-    // no index yet at the destination — fine, create one below
-  }
-
-  const trimmed = existing.replace(/\s+$/, "");
-  const updated = trimmed.length > 0 ? `${trimmed}\n${line}\n` : `${line}\n`;
-  await Deno.writeTextFile(indexPath, updated);
+/** Opening is also allowed for the shared instructions file. */
+async function assertOpenablePath(path: string) {
+  if (path !== sharedFilePath()) await assertManagedPath(path);
 }
 
 // The auto-opened window navigates to the local server as soon as its
@@ -115,8 +81,8 @@ win.bind("getTree", (() => scanDomains()) as never);
 
 win.bind(
   "getFileContent",
-  ((path: string) => {
-    assertManagedPath(path);
+  (async (path: string) => {
+    await assertManagedPath(path);
     return Deno.readTextFile(path);
   }) as never,
 );
@@ -124,7 +90,7 @@ win.bind(
 win.bind(
   "deleteFile",
   (async (path: string) => {
-    assertManagedPath(path);
+    await assertManagedPath(path);
     await Deno.remove(path);
     await removeFromIndex(path);
     return scanDomains();
@@ -133,27 +99,27 @@ win.bind(
 
 win.bind(
   "revealInFinder",
-  ((path: string) => {
-    assertManagedPath(path);
+  (async (path: string) => {
+    await assertOpenablePath(path);
     new Deno.Command("open", { args: ["-R", path] }).spawn();
   }) as never,
 );
 
 win.bind(
   "openFile",
-  ((path: string) => {
-    assertManagedPath(path);
+  (async (path: string) => {
+    await assertOpenablePath(path);
     new Deno.Command("open", { args: [path] }).spawn();
   }) as never,
 );
 
 // "Integrate": assumes the memory's own project repo. Proposing is
-// read-only (see migrate.ts); writing is a single file, always markdown,
-// always inside that repo — reversible via the repo's own git history.
+// read-only (see migrate.ts); writing stays inside that repo, so it's
+// reversible via the repo's own git history.
 win.bind(
   "proposeIntegration",
-  ((memory: MigratableMemory, repoRoot: string) => {
-    assertManagedPath(memory.path);
+  (async (memory: MigratableMemory, repoRoot: string) => {
+    await assertManagedPath(memory.path);
     return proposeIntegration(memory, repoRoot);
   }) as never,
 );
@@ -167,36 +133,22 @@ win.bind(
   ) => writeIntegration(repoRoot, targetFile, content)) as never,
 );
 
-// "Move": fully deterministic relocation into another project's memory store
-// — no LLM, no arbitrary write target. The destination only ever selects
-// *which* store (see resolveDestination in migrate.ts); the write path is
-// always ~/.claude/projects/<domain>/memory/. Touches 4 files (new memory +
-// its index, old memory + its index), but all 4 are within the same
-// already-safe ~/.claude/projects scope, none of them overwrite unrelated
-// content (collision on the new file is refused outright, index edits are
-// simple append/line-removal), so this is one coherent, reversible operation
-// rather than the kind of unpredictable multi-file fan-out we ruled out
-// for LLM-directed writes (see feedback_scope_destructive_actions memory).
+// "Move": deterministic relocation into another store. Touches the new
+// memory, both indexes, and the old memory, all inside known stores; the new
+// file is refused on collision and index edits are append/remove.
 win.bind(
   "moveMemory",
   ((
     memory: MigratableMemory,
-    sourceDomain: string,
+    sourceStoreId: string,
     dest: MoveDestination,
   ) => {
-    assertManagedPath(memory.path);
     return (async () => {
-      const result = await writeMovedMemory(memory, sourceDomain, dest);
-      const destDir = result.writtenPath.slice(
-        0,
-        result.writtenPath.lastIndexOf("/"),
-      );
-      await addToIndex(
-        destDir,
-        memory.filename,
-        memory.name,
-        memory.description,
-      );
+      await assertManagedPath(memory.path);
+      const result = await writeMovedMemory(memory, sourceStoreId, dest);
+      await addToIndex(result.writtenPath, [
+        indexLine(memory.name, memory.filename, memory.description),
+      ]);
       await Deno.remove(memory.path);
       await removeFromIndex(memory.path);
       return { ...result, domains: await scanDomains() };
@@ -204,15 +156,62 @@ win.bind(
   }) as never,
 );
 
-// Settings are read on load (to label the one-click hoist button with its
-// current target) and written only when the user saves. writeSettings
-// validates the directory before persisting, so a bad value surfaces here
-// rather than on every later hoist.
-win.bind("getSettings", (() => readSettings()) as never);
+// "Hoist": moves the memory into the one shared instructions file every
+// agent folder points at (see hoist.ts), then removes it from its store.
+// Nothing is written if any agent folder can't be pointed at that file.
+win.bind(
+  "getHoistPlan",
+  (async (memory: MigratableMemory) => {
+    await assertManagedPath(memory.path);
+    return planHoist(memory);
+  }) as never,
+);
+
+// Undo state stays on this side, so the page can only ask to reverse a hoist
+// this process made, never hand over a path and content to write.
+const undos = new Map<number, HoistUndo>();
+let nextUndo = 1;
 
 win.bind(
-  "saveSettings",
-  ((patch: Partial<Settings>) => writeSettings(patch)) as never,
+  "hoistMemory",
+  (async (memory: MigratableMemory) => {
+    await assertManagedPath(memory.path);
+    const { wiring, undo } = await hoistMemory(memory);
+    const undoId = nextUndo++;
+    undos.set(undoId, undo);
+    return {
+      domains: await scanDomains(),
+      undoId,
+      warnings: wiring.warnings,
+    };
+  }) as never,
+);
+
+win.bind(
+  "undoHoist",
+  (async (undoId: number) => {
+    const undo = undos.get(undoId);
+    if (!undo) throw new Error("Nothing to undo.");
+    await undoHoist(undo);
+    undos.delete(undoId);
+    return scanDomains();
+  }) as never,
+);
+
+win.bind(
+  "deleteSharedInstruction",
+  (async (id: string) => {
+    await removeSharedInstruction(id);
+    return scanDomains();
+  }) as never,
+);
+
+win.bind(
+  "repairWiring",
+  (async () => {
+    await repairWiring();
+    return scanDomains();
+  }) as never,
 );
 
 Deno.serve((req) => {

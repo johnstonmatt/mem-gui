@@ -12,7 +12,10 @@
   // so what Finder's Get Info shows is frozen regardless of what's here.
   "version": "0.1.4", // x-release-please-version
   "tasks": {
-    "dev": "deno desktop --hmr --allow-read=$HOME --allow-write=$HOME/.claude,$HOME/dev --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS --allow-net=127.0.0.1 main.ts",
+    // Writes reach agent config folders (~/.claude, ~/.codex, and Ori profile
+    // folders such as ~/.claude-work) and repos for Integrate, so the grant is
+    // $HOME; main.ts and src/ decide which files are actually touched.
+    "dev": "deno desktop --hmr --allow-read=$HOME --allow-write=$HOME --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS,CLAUDE_CONFIG_DIR,CODEX_HOME --allow-net=127.0.0.1 main.ts",
     // Unlike `dev` above, the filesystem grants here are unscoped, and they
     // have to be. Deno bakes permission paths into the binary at build time,
     // and `$HOME` is expanded by the task shell as it does so — so a build on
@@ -23,10 +26,9 @@
     // literally and never expanded, so it grants nothing at all.
     //
     // The path scoping was always defence-in-depth rather than the control —
-    // main.ts gates every filesystem action on the path living inside the
-    // managed memory store, and move/hoist accept any directory on disk by
-    // design, so no compile-time path set could describe them anyway.
-    "build:mac": "deno desktop --output dist/MemGui.app --allow-read --allow-write --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS --allow-net=127.0.0.1 main.ts",
+    // main.ts gates every memory action on the path living inside a known
+    // store, and hoist writes only the agents' own instruction files.
+    "build:mac": "deno desktop --output dist/MemGui.app --allow-read --allow-write --allow-run=open,claude --allow-env=HOME,DENO_SERVE_ADDRESS,CLAUDE_CONFIG_DIR,CODEX_HOME --allow-net=127.0.0.1 main.ts",
     "fmt": "deno fmt",
     "lint": "deno lint",
     // One-time interactive setup for the release workflow's Apple secrets. The

@@ -1,3 +1,5 @@
+import { buildTree, storeLabel } from "./tree.js";
+
 const treemapEl = document.getElementById("treemap");
 const breadcrumbEl = document.getElementById("breadcrumb");
 const emptyStateEl = document.getElementById("empty-state");
@@ -8,12 +10,15 @@ const state = {
   domains: [],
   minMtime: 0,
   maxMtime: 1,
-  view: { mode: "overview", domain: null },
+  // The node being viewed: null for the ~ root, else a store's id.
+  view: { nodeId: null },
+  tree: null,
   activeFile: null,
-  // Mirrors the backend defaults in src/settings.ts so the UI still renders
-  // sensibly if the settings read fails.
-  settings: { defaultHoistDir: "~" },
 };
+
+function domainOf(file) {
+  return state.domains.find((d) => d.id === file.storeId);
+}
 
 // --- squarified treemap layout -------------------------------------------
 
@@ -130,12 +135,16 @@ function formatRelativeTime(mtime) {
   return "just now";
 }
 
+function nodeFor(file) {
+  return state.tree?.nodes.get(file.storeId) ?? null;
+}
+
 // --- rendering --------------------------------------------------------------
 
 const HEADER_H = 16;
 const GAP = 2;
 
-function renderFileLeaves(files, x, y, w, h, container) {
+function renderFileLeaves(files, x, y, w, h, container, invalid) {
   const rects = squarify(
     files.map((f) => ({ value: f.tokens, file: f })),
     x + GAP,
@@ -147,12 +156,14 @@ function renderFileLeaves(files, x, y, w, h, container) {
   for (const r of rects) {
     const file = r.item.file;
     const leaf = document.createElement("div");
-    leaf.className = "file-leaf" + (file.isIndex ? " is-index" : "");
+    leaf.className = "file-leaf" + (file.isIndex ? " is-index" : "") +
+      (invalid ? " invalid" : "");
     leaf.style.left = `${r.x}px`;
     leaf.style.top = `${r.y}px`;
     leaf.style.width = `${Math.max(0, r.w)}px`;
     leaf.style.height = `${Math.max(0, r.h)}px`;
-    leaf.style.background = colorForRecency(file.mtime);
+    // backgroundColor, not background, so the stripes' image layer survives.
+    leaf.style.backgroundColor = colorForRecency(file.mtime);
     if (r.w > 40 && r.h > 14) {
       leaf.textContent = `${file.name} · ${file.tokens}t`;
     }
@@ -166,124 +177,154 @@ function renderFileLeaves(files, x, y, w, h, container) {
   }
 }
 
-function renderOverview() {
-  treemapEl.innerHTML = "";
-  const w = treemapEl.clientWidth;
-  const h = treemapEl.clientHeight;
+const SCOPE_WORD = {
+  repo: "repo",
+  dir: "folder",
+  everywhere: "shared folder",
+  named: "named project",
+  orphaned: "folder gone",
+  overridden: "unused",
+};
 
+function formatTokens(n) {
+  return n < 1000 ? `${n}t` : `${(n / 1000).toFixed(1)}kt`;
+}
+
+function countStores(node) {
+  return node.children.reduce((sum, c) => sum + 1 + countStores(c), 0);
+}
+
+/** Facts about a box, in its header: kind, size, what's inside, freshness. */
+function headerText(node) {
+  const memories = node.files.filter((f) => !f.isIndex);
+  const noun = node.parent === null ? "instruction" : "memor";
+  const count = memories.length === 1
+    ? `1 ${noun}${node.parent === null ? "" : "y"}`
+    : `${memories.length} ${noun}${node.parent === null ? "s" : "ies"}`;
+  const stores = countStores(node);
+  const newest = Math.max(0, ...node.files.map((f) => f.mtime));
+  return [
+    node.label,
+    node.domain && node.parent !== null ? SCOPE_WORD[node.domain.scope] : null,
+    count,
+    formatTokens(node.ownTotal),
+    stores ? `${formatTokens(node.total)} total` : null,
+    stores ? `${stores} store${stores === 1 ? "" : "s"} inside` : null,
+    newest ? `updated ${formatRelativeTime(newest)}` : null,
+  ].filter(Boolean).join(" · ");
+}
+
+/** The why behind a box, on hover rather than in its header. */
+function boxTooltip(node) {
+  const where = node.domain?.dir || node.label;
+  if (node.parent === null) return "~ applies to everything below it.";
+  return node.invalid
+    ? `${where}\nIts memories don't reach the stores inside it.`
+    : where;
+}
+
+/** Draws a node as a box: its own memories as one cluster, its children beside them. */
+function renderNode(node, x, y, w, h, container) {
+  const box = document.createElement("div");
+  box.className = "domain-box" + (node.parent === null ? " root-box" : "") +
+    (node.invalid ? " invalid" : "");
+  box.style.left = `${x}px`;
+  box.style.top = `${y}px`;
+  box.style.width = `${Math.max(0, w)}px`;
+  box.style.height = `${Math.max(0, h)}px`;
+  box.title = boxTooltip(node);
+  box.addEventListener("click", (e) => {
+    e.stopPropagation();
+    zoomTo(node);
+  });
+
+  const label = document.createElement("div");
+  label.className = "domain-label";
+  label.textContent = headerText(node);
+  box.appendChild(label);
+  container.appendChild(box);
+
+  const items = [
+    ...(node.ownTotal > 0 ? [{ value: node.ownTotal, own: true }] : []),
+    ...node.children.map((child) => ({ value: child.total, child })),
+  ];
   const rects = squarify(
-    state.domains.map((d) => ({ value: d.totalTokens, domain: d })),
-    0,
-    0,
-    w,
-    h,
+    items,
+    GAP,
+    HEADER_H + GAP,
+    Math.max(0, w - GAP * 2),
+    Math.max(0, h - HEADER_H - GAP * 2),
   );
-
   for (const r of rects) {
-    const domain = r.item.domain;
-    const box = document.createElement("div");
-    box.className = "domain-box";
-    box.style.left = `${r.x}px`;
-    box.style.top = `${r.y}px`;
-    box.style.width = `${Math.max(0, r.w)}px`;
-    box.style.height = `${Math.max(0, r.h)}px`;
-    box.title = domain.domainLabel;
-    box.addEventListener("click", () => zoomToDomain(domain));
-
-    const label = document.createElement("div");
-    label.className = "domain-label";
-    label.textContent = `${domain.domainLabel} · ${domain.totalTokens}t`;
-    box.appendChild(label);
-
-    treemapEl.appendChild(box);
-
-    renderFileLeaves(
-      domain.files,
-      0,
-      HEADER_H,
-      r.w,
-      Math.max(0, r.h - HEADER_H),
-      box,
-    );
+    if (r.item.own) {
+      renderFileLeaves(
+        node.files,
+        r.x - GAP,
+        r.y - GAP,
+        r.w + GAP * 2,
+        r.h + GAP * 2,
+        box,
+        node.invalid,
+      );
+    } else {
+      renderNode(r.item.child, r.x, r.y, r.w, r.h, box);
+    }
   }
-
-  setBreadcrumb([{ label: "All domains", domain: null }]);
 }
 
-function renderDomainZoom(domain) {
-  treemapEl.innerHTML = "";
-  const w = treemapEl.clientWidth;
-  const h = treemapEl.clientHeight;
-  renderFileLeaves(domain.files, 0, 0, w, h, treemapEl);
-  setBreadcrumb([
-    { label: "All domains", domain: null },
-    { label: domain.domainLabel, domain },
-  ]);
+/** Each crumb names only what its parent's crumb doesn't: ~ › dev › supabase › cli. */
+function crumbLabel(node) {
+  if (node.parent === null) return "~";
+  // Nested stores' labels are already relative to the store around them.
+  if (node.parent.parent !== null) return node.label;
+  return node.label.replace(/^~( · |\/)/, "");
 }
 
-function setBreadcrumb(crumbs) {
+function setBreadcrumb(node) {
+  const trail = [];
+  for (let n = node; n; n = n.parent) trail.unshift(n);
   breadcrumbEl.innerHTML = "";
-  crumbs.forEach((c, i) => {
-    const isActive = i === crumbs.length - 1;
-
+  trail.forEach((n, i) => {
     if (i > 0) {
       const sep = document.createElement("span");
       sep.className = "breadcrumb-sep";
       sep.textContent = "›";
       breadcrumbEl.appendChild(sep);
     }
-
     const span = document.createElement("span");
-    span.textContent = c.label;
+    span.textContent = crumbLabel(n);
+    // The active crumb is the current view, not a link to itself.
+    const isActive = i === trail.length - 1;
     span.className = isActive ? "breadcrumb-active" : "breadcrumb-link";
-    // The active crumb reflects the current view — it isn't a link to
-    // itself, so it gets no click handler at all, not just different
-    // styling (a no-op click was confusing before this cleanup).
-    if (!isActive) {
-      span.addEventListener("click", () => {
-        if (c.domain) zoomToDomain(c.domain);
-        else showOverview();
-      });
-    }
+    if (!isActive) span.addEventListener("click", () => zoomTo(n));
     breadcrumbEl.appendChild(span);
   });
 }
 
-function showOverview() {
-  state.view = { mode: "overview", domain: null };
-  render();
-}
-
-function zoomToDomain(domain) {
-  state.view = { mode: "domain", domain };
+function zoomTo(node) {
+  state.view = { nodeId: node.id };
   render();
 }
 
 function render() {
   const hasFiles = state.domains.length > 0;
   emptyStateEl.classList.toggle("hidden", hasFiles);
-  if (!hasFiles) {
-    treemapEl.innerHTML = "";
-    setBreadcrumb([{ label: "All domains", domain: null }]);
-    return;
-  }
-  // state.domains is replaced wholesale on every mutation/rescan (delete,
-  // hoist, refresh), so a zoomed view's cached domain object goes stale — it
-  // still lists the file we just deleted. Re-point it to the fresh object
-  // (matched by domain id), or fall back to the overview if that domain is
-  // gone entirely (e.g. its last memory was deleted).
-  if (state.view.mode === "domain") {
-    const fresh = state.domains.find(
-      (d) => d.domain === (state.view.domain && state.view.domain.domain),
-    );
-    if (fresh) {
-      state.view.domain = fresh;
-      renderDomainZoom(fresh);
-      return;
-    }
-    state.view = { mode: "overview", domain: null };
-  }
-  renderOverview();
+  treemapEl.innerHTML = "";
+  state.tree = buildTree(state.domains);
+  // The tree is rebuilt on every rescan, so the view is kept by id and falls
+  // back to ~ when that store is gone (e.g. its last memory was deleted).
+  const node = state.tree.nodes.get(state.view.nodeId) ?? state.tree.root;
+  state.view = { nodeId: node.id };
+  setBreadcrumb(node);
+  if (!hasFiles) return;
+  renderNode(
+    node,
+    0,
+    0,
+    treemapEl.clientWidth,
+    treemapEl.clientHeight,
+    treemapEl,
+  );
 }
 
 // --- detail panel -----------------------------------------------------------
@@ -293,18 +334,80 @@ const detailNameEl = document.getElementById("detail-name");
 const detailMetaEl = document.getElementById("detail-meta");
 const detailContentEl = document.getElementById("detail-content");
 
+const SCOPE_TEXT = {
+  shared: () =>
+    "Every coding agent on this machine follows this in every project.",
+  repo: (label) => `Loads in sessions inside ${label} and its worktrees.`,
+  dir: (label) => `Loads only in sessions started in exactly ${label}.`,
+  everywhere: () => "Loads in every project.",
+  named: (label) =>
+    `Loads in sessions launched with the project name ${label}.`,
+  orphaned: (label) => `${label} no longer exists, so this never loads.`,
+  overridden: () =>
+    "Never loads: memory for every project now lives in one shared folder.",
+};
+
+/** Where this memory actually loads — stores never inherit from parents. */
+function scopeLine(file) {
+  const domain = domainOf(file);
+  const el = document.createElement("div");
+  el.className = "detail-scope";
+  el.textContent = domain ? SCOPE_TEXT[domain.scope](file.domainLabel) : "";
+  if (nodeFor(file)?.invalid) {
+    el.textContent += " It doesn't reach the stores inside its folder, " +
+      "which keep their own memory: hoist it to ~, or move it to the project " +
+      "it's for.";
+  }
+  return el;
+}
+
+const detailWiringEl = document.getElementById("detail-wiring");
+const detailWiringTextEl = document.getElementById("detail-wiring-text");
+const repairBtn = document.getElementById("repair-btn");
+
+/** For hoisted instructions: agent folders not yet reading the shared file. */
+function renderWiring(file) {
+  const wiring = file.section !== undefined && domainOf(file)?.wiring;
+  const lines = wiring
+    ? [
+      ...wiring.blocked,
+      ...wiring.warnings,
+      ...(wiring.pending.length
+        ? [`Not yet reading these instructions: ${wiring.pending.join(", ")}.`]
+        : []),
+    ]
+    : [];
+  detailWiringTextEl.textContent = lines.join("\n");
+  repairBtn.classList.toggle(
+    "hidden",
+    !wiring || wiring.pending.length === 0 || wiring.blocked.length > 0,
+  );
+  detailWiringEl.classList.toggle("hidden", lines.length === 0);
+}
+
 async function openDetail(file) {
   state.activeFile = file;
+  const shared = file.section !== undefined;
+  // Hoisted instructions are already everywhere; only memories move around.
+  for (const btn of [integrateBtn, hoistBtn, moveBtn]) {
+    btn.classList.toggle("hidden", shared);
+  }
   detailDomainEl.textContent = file.domainLabel;
   detailNameEl.textContent = file.name;
   detailMetaEl.innerHTML =
     `<span class="type-badge">${file.type}</span>${file.tokens} tokens · ${file.chars} chars · modified ${
       formatRelativeTime(file.mtime)
     }<br>${file.description}`;
-  detailContentEl.textContent = "Loading…";
+  detailMetaEl.appendChild(scopeLine(file));
+  renderWiring(file);
   detailEl.classList.remove("hidden");
   resetMigratePanel();
 
+  if (shared) {
+    detailContentEl.textContent = file.content;
+    return;
+  }
+  detailContentEl.textContent = "Loading…";
   try {
     detailContentEl.textContent = await bindings.getFileContent(file.path);
   } catch (err) {
@@ -329,30 +432,63 @@ document.getElementById("open-btn").addEventListener("click", () => {
 document.getElementById("delete-btn").addEventListener("click", async () => {
   const file = state.activeFile;
   if (!file) return;
+  if (file.section !== undefined) {
+    if (file.section === "") {
+      setActionStatus("Edit this text directly: use Open.");
+      return;
+    }
+    const prompt =
+      `Delete "${file.name}" for every agent? This removes it from ${file.description}.`;
+    if (!confirm(prompt)) return;
+    try {
+      state.domains = await bindings.deleteSharedInstruction(file.section);
+    } catch (err) {
+      setActionStatus(`Failed to delete: ${err}`);
+      return;
+    }
+    computeMinMax();
+    detailEl.classList.add("hidden");
+    state.activeFile = null;
+    render();
+    return;
+  }
   if (!confirm(`Delete "${file.name}"? This cannot be undone.`)) return;
   await deleteMemory(file);
 });
 
-// --- integrate into repo / move between stores --------------------------------
-// Purpose-built actions rather than one generic "pick any target" flow:
-//  - Integrate: assumes the memory's own project repo, no picking needed. A
-//    read-only `claude` sub-process (see src/migrate.ts) proposes the single
-//    best doc to fold it into; nothing writes until you review and confirm.
-//    Reversible via the repo's own git history.
-//  - Move to…: fully deterministic, no LLM — relocates the memory as-is into
-//    another project's memory store, picked from the domains already scanned or
-//    named as a directory. Refuses outright on a filename collision rather
-//    than overwriting.
-//  - Hoist: the same move with the destination pre-set to the configured
-//    default hoist directory (a broad root, so the memory applies across
-//    projects instead of one) — one click, no picking.
-// Neither one auto-deletes as a side effect of writing; a move's deletion of
-// the original is part of the move the user confirmed, not a hidden extra.
+repairBtn.addEventListener("click", async () => {
+  try {
+    state.domains = await bindings.repairWiring();
+    computeMinMax();
+    render();
+    const file = state.activeFile && domainOf(state.activeFile)?.files.find(
+      (f) => f.section === state.activeFile.section,
+    );
+    if (file) openDetail(file);
+  } catch (err) {
+    setActionStatus(`Failed to fix links: ${err}`);
+  }
+});
+
+// --- integrate / hoist / move -----------------------------------------------
+//  - Integrate: a read-only `claude` run proposes one doc in the memory's own
+//    repo to fold it into; nothing writes until you confirm.
+//  - Hoist: moves it up to ~, the one instructions file every agent on this
+//    machine reads in every project. One click, with Undo; it only asks first
+//    when agent folders also need pointing at that file.
+//  - Move to…: relocates it as-is into another project's store.
 
 const actionSpinnerEl = document.getElementById("action-spinner");
 const actionStatusTextEl = document.getElementById("action-status-text");
 const integrateBtn = document.getElementById("integrate-btn");
 const hoistBtn = document.getElementById("hoist-btn");
+const hoistPanel = document.getElementById("hoist-panel");
+const hoistFilesEl = document.getElementById("hoist-files");
+const hoistFilesSummaryEl = document.getElementById("hoist-files-summary");
+const hoistConfirmBtn = document.getElementById("hoist-confirm-btn");
+const hoistProblemsEl = document.getElementById("hoist-problems");
+const undoBtn = document.getElementById("undo-btn");
+let pendingUndo = null;
 const moveBtn = document.getElementById("move-btn");
 const movePanel = document.getElementById("move-panel");
 const moveDestEl = document.getElementById("move-dest");
@@ -364,6 +500,9 @@ const integrateProposalTargetEl = document.getElementById(
 const integrateProposalSummaryEl = document.getElementById(
   "integrate-proposal-summary",
 );
+const integrateProposalAlsoEl = document.getElementById(
+  "integrate-proposal-also",
+);
 const integrateProposalContentEl = document.getElementById(
   "integrate-proposal-content",
 );
@@ -372,15 +511,18 @@ const integrateDiscardBtn = document.getElementById("integrate-discard-btn");
 
 let integrateProposal = null;
 
-function setActionStatus(text, { spinning = false } = {}) {
+function setActionStatus(text, { spinning = false, undo = null } = {}) {
   actionStatusTextEl.textContent = text;
   actionSpinnerEl.classList.toggle("hidden", !spinning);
+  pendingUndo = undo;
+  undoBtn.classList.toggle("hidden", !undo);
 }
 
 function resetMigratePanel() {
   setActionStatus("");
   integratePanel.classList.add("hidden");
   movePanel.classList.add("hidden");
+  hoistPanel.classList.add("hidden");
   integrateProposal = null;
 }
 
@@ -406,18 +548,17 @@ integrateBtn.addEventListener("click", async () => {
 
   try {
     const proposal = await bindings.proposeIntegration(
-      {
-        path: file.path,
-        filename: file.filename,
-        name: file.name,
-        description: file.description,
-      },
-      file.domainLabel,
+      memoryPayload(file),
+      file.dir,
     );
     integrateProposal = proposal;
     setActionStatus("");
     integrateProposalTargetEl.textContent = proposal.targetFile;
     integrateProposalSummaryEl.textContent = proposal.summary;
+    integrateProposalAlsoEl.textContent = proposal.alsoImportsIn
+      ? `Also adds an @AGENTS.md line to ${proposal.alsoImportsIn}, so every agent reads it.`
+      : "";
+    integrateProposalAlsoEl.classList.toggle("hidden", !proposal.alsoImportsIn);
     integrateProposalContentEl.textContent = proposal.content;
     integratePanel.classList.remove("hidden");
   } catch (err) {
@@ -431,17 +572,18 @@ integrateApplyBtn.addEventListener("click", async () => {
   setActionStatus("Writing…", { spinning: true });
   try {
     const result = await bindings.applyIntegration(
-      file.domainLabel,
+      file.dir,
       integrateProposal.targetFile,
       integrateProposal.content,
     );
     integratePanel.classList.add("hidden");
     integrateProposal = null;
-    setActionStatus(`Written to ${result.writtenPath}`);
+    const written = result.writtenPaths.join(", ");
+    setActionStatus(`Written to ${written}`);
 
     if (
       confirm(
-        `Integrated into ${result.writtenPath}.\n\nDelete the original memory "${file.name}" now that it's captured there?`,
+        `Integrated into ${written}.\n\nDelete the original memory "${file.name}" now that it's captured there?`,
       )
     ) {
       setActionStatus("Deleting original memory…", { spinning: true });
@@ -462,10 +604,7 @@ integrateDiscardBtn.addEventListener("click", () => {
   setActionStatus("");
 });
 
-/**
- * The one write path for both Hoist and Move to… — `dest` is the only thing
- * that differs between them (see MoveDestination in src/migrate.ts).
- */
+/** Shared write path for every Move to… destination (see src/migrate.ts). */
 async function moveMemory(file, dest, destLabel) {
   if (
     !confirm(
@@ -478,13 +617,8 @@ async function moveMemory(file, dest, destLabel) {
   setActionStatus(`Moving to ${destLabel}…`, { spinning: true });
   try {
     const result = await bindings.moveMemory(
-      {
-        path: file.path,
-        filename: file.filename,
-        name: file.name,
-        description: file.description,
-      },
-      file.domain,
+      memoryPayload(file),
+      file.storeId,
       dest,
     );
     state.domains = result.domains;
@@ -498,35 +632,131 @@ async function moveMemory(file, dest, destLabel) {
   }
 }
 
-hoistBtn.addEventListener("click", () => {
+function memoryPayload(file) {
+  return {
+    path: file.path,
+    filename: file.filename,
+    name: file.name,
+    description: file.description,
+  };
+}
+
+const HOIST_ACTION_TEXT = {
+  create: "Creates the shared file",
+  append: "Adds it to",
+  link: "Points at the shared file:",
+  merge: "Moves its text into the shared file, then points at it:",
+  import: "Adds an import of the shared file to",
+};
+
+function renderHoistPlan(plan) {
+  hoistFilesEl.innerHTML = "";
+  for (const step of plan.steps) {
+    const item = document.createElement("li");
+    const code = document.createElement("code");
+    code.textContent = step.display;
+    item.append(`${HOIST_ACTION_TEXT[step.action]} `, code);
+    hoistFilesEl.appendChild(item);
+  }
+  const n = plan.steps.length;
+  hoistFilesSummaryEl.textContent = `Changes ${n} file${n === 1 ? "" : "s"}`;
+  const problems = [...plan.blocked, ...plan.warnings];
+  hoistProblemsEl.textContent = problems.join("\n");
+  hoistProblemsEl.classList.toggle("hidden", problems.length === 0);
+  hoistConfirmBtn.disabled = plan.blocked.length > 0;
+}
+
+/** Hoists, then shows the instruction where it landed in ~, with Undo. */
+async function doHoist(file) {
+  hoistConfirmBtn.disabled = true;
+  setActionStatus("Hoisting…", { spinning: true });
+  let result;
+  try {
+    result = await bindings.hoistMemory(memoryPayload(file));
+  } catch (err) {
+    hoistConfirmBtn.disabled = false;
+    setActionStatus(`Failed to hoist: ${err}`);
+    return;
+  }
+  state.domains = result.domains;
+  computeMinMax();
+  render();
+  const hoisted = state.domains.find((d) => d.scope === "shared")?.files
+    .find((f) => f.section === file.filename);
+  if (hoisted) openDetail(hoisted);
+  else detailEl.classList.add("hidden");
+  const note = result.warnings.length ? ` ${result.warnings.join(" ")}` : "";
+  setActionStatus(`Hoisted "${file.name}" to ~.${note}`, {
+    undo: { id: result.undoId, path: file.path },
+  });
+}
+
+hoistBtn.addEventListener("click", async () => {
   const file = state.activeFile;
   if (!file) return;
-  const dir = state.settings.defaultHoistDir;
-  moveMemory(file, { kind: "dir", dir }, dir);
+  resetMigratePanel();
+  let plan;
+  try {
+    plan = await bindings.getHoistPlan(memoryPayload(file));
+  } catch (err) {
+    setActionStatus(`Can't hoist this: ${err}`);
+    return;
+  }
+  if (plan.blocked.length) {
+    setActionStatus(`Can't hoist this: ${plan.blocked.join(" ")}`);
+    return;
+  }
+  // Only a change to agent folders needs a look first; adding to ~ doesn't.
+  if (plan.steps.every((step) => step.action === "append")) {
+    await doHoist(file);
+    return;
+  }
+  renderHoistPlan(plan);
+  hoistPanel.classList.remove("hidden");
+});
+
+document.getElementById("hoist-cancel-btn").addEventListener("click", () => {
+  hoistPanel.classList.add("hidden");
+  setActionStatus("");
+});
+
+hoistConfirmBtn.addEventListener("click", () => {
+  if (state.activeFile) doHoist(state.activeFile);
+});
+
+undoBtn.addEventListener("click", async () => {
+  const undo = pendingUndo;
+  if (!undo) return;
+  setActionStatus("Undoing…", { spinning: true });
+  try {
+    state.domains = await bindings.undoHoist(undo.id);
+  } catch (err) {
+    setActionStatus(`Failed to undo: ${err}`);
+    return;
+  }
+  computeMinMax();
+  render();
+  const restored = state.domains.flatMap((d) => d.files)
+    .find((f) => f.path === undo.path);
+  if (restored) openDetail(restored);
+  setActionStatus("Hoist undone.");
 });
 
 const MOVE_DEST_CUSTOM = "custom";
 
 /**
- * Existing domains are offered by their domain id, not their displayed path:
- * the id is what the store is keyed by, and for a domain with no session
- * transcript the label is only a lossy guess at the real path (see
- * scanner.ts) — round-tripping through it could name a different store.
+ * Existing stores are offered by their id, not their displayed path: for a
+ * store whose directory is gone the label is only a guess (see scanner.ts),
+ * so round-tripping through it could name a different store.
  */
 function populateMoveDest(file) {
   moveDestEl.innerHTML = "";
 
-  const hoistDir = state.settings.defaultHoistDir;
-  const defaultOption = document.createElement("option");
-  defaultOption.value = `dir:${hoistDir}`;
-  defaultOption.textContent = `${hoistDir} (default hoist)`;
-  moveDestEl.appendChild(defaultOption);
-
   for (const domain of state.domains) {
-    if (domain.domain === file.domain) continue;
+    if (domain.id === file.storeId) continue;
     const option = document.createElement("option");
-    option.value = `domain:${domain.domain}`;
-    option.textContent = domain.domainLabel;
+    option.value = `store:${domain.id}`;
+    option.textContent = storeLabel(domain);
     moveDestEl.appendChild(option);
   }
 
@@ -537,7 +767,10 @@ function populateMoveDest(file) {
 
   moveDestEl.selectedIndex = 0;
   moveDestDirEl.value = "";
-  moveDestDirEl.classList.add("hidden");
+  moveDestDirEl.classList.toggle(
+    "hidden",
+    moveDestEl.value !== MOVE_DEST_CUSTOM,
+  );
 }
 
 moveDestEl.addEventListener("change", () => {
@@ -570,86 +803,15 @@ document.getElementById("move-confirm-btn").addEventListener("click", () => {
       setActionStatus("Enter a directory to move this memory to.");
       return;
     }
-    moveMemory(file, { kind: "dir", dir }, dir);
+    // A named directory means its store in the same agent home as the source.
+    const home = domainOf(file)?.home;
+    moveMemory(file, { kind: "dir", dir, home }, dir);
     return;
   }
 
-  const [kind, ...rest] = value.split(":");
-  const target = rest.join(":");
-  if (kind === "dir") {
-    moveMemory(file, { kind: "dir", dir: target }, target);
-  } else {
-    const label = moveDestEl.selectedOptions[0].textContent;
-    moveMemory(file, { kind: "domain", domain: target }, label);
-  }
-});
-
-// --- settings ----------------------------------------------------------------
-
-const settingsOverlay = document.getElementById("settings-overlay");
-const settingsHoistDirEl = document.getElementById("settings-hoist-dir");
-const settingsStatusEl = document.getElementById("settings-status");
-
-function setSettingsStatus(text, { error = false } = {}) {
-  settingsStatusEl.textContent = text;
-  settingsStatusEl.classList.toggle("error", error);
-}
-
-/** The hoist button names its target, so the setting is visible where it acts. */
-function applySettings() {
-  const dir = state.settings.defaultHoistDir;
-  hoistBtn.textContent = `Hoist to ${dir}`;
-  hoistBtn.title = `Move this memory into ${dir}'s memory store`;
-}
-
-function openSettings() {
-  settingsHoistDirEl.value = state.settings.defaultHoistDir;
-  setSettingsStatus("");
-  settingsOverlay.classList.remove("hidden");
-  settingsHoistDirEl.focus();
-}
-
-function closeSettings() {
-  settingsOverlay.classList.add("hidden");
-}
-
-document.getElementById("settings-btn").addEventListener("click", openSettings);
-document.getElementById("settings-cancel-btn").addEventListener(
-  "click",
-  closeSettings,
-);
-
-// Clicking the backdrop dismisses, but clicks inside the dialog must not — they
-// bubble up to the overlay too.
-settingsOverlay.addEventListener("click", (e) => {
-  if (e.target === settingsOverlay) closeSettings();
-});
-
-document.getElementById("settings-save-btn").addEventListener(
-  "click",
-  async () => {
-    const dir = settingsHoistDirEl.value.trim();
-    if (!dir) {
-      setSettingsStatus("Enter a directory.", { error: true });
-      return;
-    }
-    setSettingsStatus("Saving…");
-    try {
-      // The backend validates the directory exists before persisting, so a
-      // typo is caught here rather than on every later hoist.
-      state.settings = await bindings.saveSettings({ defaultHoistDir: dir });
-      applySettings();
-      closeSettings();
-    } catch (err) {
-      setSettingsStatus(`${err}`, { error: true });
-    }
-  },
-);
-
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !settingsOverlay.classList.contains("hidden")) {
-    closeSettings();
-  }
+  const storeId = value.slice("store:".length);
+  const label = moveDestEl.selectedOptions[0].textContent;
+  moveMemory(file, { kind: "store", storeId }, label);
 });
 
 // --- bootstrap ---------------------------------------------------------------
@@ -693,16 +855,6 @@ async function load() {
     emptyStateEl.classList.remove("hidden");
     return;
   }
-
-  // Settings only decide button labels and the default move target, and
-  // state.settings already holds usable defaults — so a failure here must not
-  // take the treemap down with it.
-  try {
-    state.settings = await callBinding("getSettings");
-  } catch (err) {
-    console.error("Failed to read settings, falling back to defaults:", err);
-  }
-  applySettings();
 
   try {
     state.domains = await callBinding("getTree");
