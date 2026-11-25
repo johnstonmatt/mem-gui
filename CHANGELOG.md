@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.0](https://github.com/johnstonmatt/mem-gui/compare/v0.1.4...v0.2.0) (2026-11-25)
+
+
+### Features
+
+* add in-app updates for macOS ([be86aa7](https://github.com/johnstonmatt/mem-gui/commit/be86aa71fe08f86649b2b88debabc386d88b937c))
+* hoist memories into shared agent instructions ([c2c8af3](https://github.com/johnstonmatt/mem-gui/commit/c2c8af36b017405cab8aebb00eb106d719ac743a))
+
+
+### Bug Fixes
+
+* **release:** build with a pinned Deno 2.9.8 ([a4568c5](https://github.com/johnstonmatt/mem-gui/commit/a4568c5c7ec286f599e2f3bf24bc8fefda2d648f))
+
 ## [0.1.4](https://github.com/johnstonmatt/mem-gui/compare/v0.1.3...v0.1.4) (2026-08-05)
 
 

@@ -8,7 +8,7 @@
   // which the in-app updater compares with the latest GitHub release, and
   // into Info.plist, where the updater checks a download's version and Finder
   // shows it.
-  "version": "0.1.4", // x-release-please-version
+  "version": "0.2.0", // x-release-please-version
   "tasks": {
     // Writes reach agent config folders (~/.claude, ~/.codex, and Ori profile
     // folders such as ~/.claude-work) and repos for Integrate, so the grant is
