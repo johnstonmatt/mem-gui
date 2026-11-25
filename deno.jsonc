@@ -5,9 +5,9 @@
   // picks the strategy it does).
   //
   // `deno desktop` bakes this into the built dylib as `Deno.desktopVersion`,
-  // which the in-app updater compares with the latest GitHub release.
-  // scripts/package_app.zsh also writes it into Info.plist, where deno desktop
-  // hardcodes "1.0"; the updater checks a download's version there.
+  // which the in-app updater compares with the latest GitHub release, and
+  // into Info.plist, where the updater checks a download's version and Finder
+  // shows it.
   "version": "0.1.4", // x-release-please-version
   "tasks": {
     // Writes reach agent config folders (~/.claude, ~/.codex, and Ori profile
@@ -32,8 +32,11 @@
     // unpacking, version and signature checks, and the installer. Running zsh
     // amounts to running anything, which unscoped --allow-write already does.
     //
+    // --output names the bundle without its extension: deno appends ".app"
+    // even to a path that already ends in it, despite its help text.
+    //
     // This is the raw build; package:mac finishes and re-signs the bundle.
-    "build:mac": "deno desktop --output dist/MemGui.app --allow-read --allow-write --allow-run=open,claude,/usr/bin/ditto,/usr/bin/codesign,/usr/sbin/spctl,/usr/bin/plutil,/bin/zsh --allow-env=HOME,DENO_SERVE_ADDRESS,CLAUDE_CONFIG_DIR,CODEX_HOME --allow-net=127.0.0.1,api.github.com,github.com,release-assets.githubusercontent.com main.ts",
+    "build:mac": "deno desktop --output dist/MemGui --allow-read --allow-write --allow-run=open,claude,/usr/bin/ditto,/usr/bin/codesign,/usr/sbin/spctl,/usr/bin/plutil,/bin/zsh --allow-env=HOME,DENO_SERVE_ADDRESS,CLAUDE_CONFIG_DIR,CODEX_HOME --allow-net=127.0.0.1,api.github.com,github.com,release-assets.githubusercontent.com main.ts",
     // The build that ships: see scripts/package_app.zsh.
     "package:mac": "zsh scripts/package_app.zsh",
     // Build from source and install to /Applications, as an update would.
