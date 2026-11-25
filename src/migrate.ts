@@ -1,4 +1,5 @@
-import { domainForProjectDir, resolveProjectDir } from "./paths.ts";
+import { resolveProjectDir, storeForDir } from "./paths.ts";
+import { discoverHomes, listMemoryStores, sharedMemoryDir } from "./homes.ts";
 
 export interface MigratableMemory {
   path: string;
@@ -8,20 +9,20 @@ export interface MigratableMemory {
 }
 
 /**
- * Where a move sends a memory. Two ways to name the same thing, because both
- * are exact in one direction only: an already-scanned domain is identified by
- * the id the store is literally keyed by (reversing that id back to a real path
- * is lossy — see scanner.ts), while a directory the user names is turned into
- * an id by the exact forward escaping (see domainForProjectDir).
+ * Where a move sends a memory: an existing store by its id (its directory),
+ * or a directory, meaning the store a session started there would use in the
+ * given Claude Code home (the repo root's, inside a repo).
  */
 export type MoveDestination =
-  | { kind: "domain"; domain: string }
-  | { kind: "dir"; dir: string };
+  | { kind: "store"; storeId: string }
+  | { kind: "dir"; dir: string; home: string };
 
 export interface IntegrationProposal {
   targetFile: string;
   summary: string;
   content: string;
+  /** A CLAUDE.md that will also gain an `@AGENTS.md` import, if any. */
+  alsoImportsIn: string | null;
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -33,7 +34,7 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function stripFrontmatter(content: string): string {
+export function stripFrontmatter(content: string): string {
   return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
 }
 
@@ -104,7 +105,7 @@ Memory content:
 ${body}
 ---
 
-Decide the single best file in this repo to write this into (relative to the repo root; create it if it doesn't exist — e.g. README.md, DEVELOPMENT.md, or something under docs/), and produce that file's FULL new content after integration. Prefer merging into existing relevant sections over blindly appending. Respond only via the required schema.`;
+Decide the single best file in this repo to write this into (relative to the repo root; create it if it doesn't exist — e.g. README.md, DEVELOPMENT.md, or something under docs/), and produce that file's FULL new content after integration. If it is guidance for coding agents rather than documentation for people, use the root AGENTS.md (create it if needed): it is the file every coding agent reads. Prefer merging into existing relevant sections over blindly appending. Respond only via the required schema.`;
 
   const command = new Deno.Command("claude", {
     args: [
@@ -152,91 +153,145 @@ Decide the single best file in this repo to write this into (relative to the rep
     throw new Error(`Refusing non-markdown target: ${targetFile}`);
   }
 
-  return { targetFile, summary: proposal.summary, content: proposal.content };
+  return {
+    targetFile,
+    summary: proposal.summary,
+    content: proposal.content,
+    alsoImportsIn: await claudeMdMissingImport(repoRoot, targetFile),
+  };
 }
 
-/** The only function that writes for "Integrate" — one file, always markdown, always inside the repo it was proposed for. */
+const CLAUDE_MD_CANDIDATES = [
+  { file: "CLAUDE.md", line: "@AGENTS.md" },
+  { file: ".claude/CLAUDE.md", line: "@../AGENTS.md" },
+];
+
+/**
+ * When a write targets the root AGENTS.md but the repo's CLAUDE.md doesn't
+ * import it, Claude Code would skip it (a CLAUDE.md takes precedence), so that
+ * CLAUDE.md needs an `@AGENTS.md` line. Returns which CLAUDE.md, or null.
+ */
+async function claudeMdMissingImport(
+  repoRoot: string,
+  targetFile: string,
+): Promise<string | null> {
+  if (targetFile !== `${repoRoot}/AGENTS.md`) return null;
+  let first: string | null = null;
+  for (const { file } of CLAUDE_MD_CANDIDATES) {
+    let text: string;
+    try {
+      text = await Deno.readTextFile(`${repoRoot}/${file}`);
+    } catch {
+      continue;
+    }
+    if (/^\s*@(\.\.?\/)?AGENTS\.md\s*$/m.test(text)) return null;
+    first ??= `${repoRoot}/${file}`;
+  }
+  return first;
+}
+
+/**
+ * The only function that writes for "Integrate": one markdown file inside the
+ * repo it was proposed for, plus the `@AGENTS.md` import line when that file
+ * is the root AGENTS.md and the repo's CLAUDE.md lacks it.
+ */
 export async function writeIntegration(
   repoRoot: string,
   targetFile: string,
   content: string,
-): Promise<{ writtenPath: string }> {
+): Promise<{ writtenPaths: string[] }> {
   assertWithinRepo(repoRoot, targetFile);
   if (!targetFile.endsWith(".md")) {
     throw new Error(`Refusing non-markdown target: ${targetFile}`);
   }
 
-  const dir = targetFile.slice(0, targetFile.lastIndexOf("/"));
-  try {
-    await Deno.stat(dir);
-  } catch {
-    await Deno.mkdir(dir, { recursive: true });
-  }
+  const importIn = await claudeMdMissingImport(repoRoot, targetFile);
+  await Deno.mkdir(targetFile.slice(0, targetFile.lastIndexOf("/")), {
+    recursive: true,
+  });
   await Deno.writeTextFile(targetFile, content);
-  return { writtenPath: targetFile };
+  if (!importIn) return { writtenPaths: [targetFile] };
+
+  const line =
+    CLAUDE_MD_CANDIDATES.find((c) => `${repoRoot}/${c.file}` === importIn)!
+      .line;
+  const existing = (await Deno.readTextFile(importIn)).replace(/\s+$/, "");
+  await Deno.writeTextFile(importIn, `${existing}\n\n${line}\n`);
+  return { writtenPaths: [targetFile, importIn] };
 }
 
 /**
- * Resolves a destination to the exact domain id its memory store is keyed by,
- * plus a human-facing label for messages. Both kinds are validated against
- * something that already exists on disk: a domain must already be a project in
- * the store, a directory must already be a real directory — so a typo fails
- * here rather than minting a bogus domain nothing will ever look at again.
+ * Resolves a destination to the memory directory it names. Both kinds are
+ * validated against what exists: a store id must be a store that's there, a
+ * directory a real directory in a known Claude Code home — so a typo fails
+ * here rather than creating a store nothing will ever load.
  */
 async function resolveDestination(
   dest: MoveDestination,
-): Promise<{ destDomain: string; destLabel: string }> {
-  const home = Deno.env.get("HOME") ?? "";
-
-  if (dest.kind === "domain") {
-    if (
-      !dest.domain || dest.domain.includes("/") || dest.domain.includes("..")
-    ) {
-      throw new Error(`Invalid destination domain: "${dest.domain}"`);
-    }
-    if (!await pathExists(`${home}/.claude/projects/${dest.domain}`)) {
-      throw new Error(`No such project domain: ${dest.domain}`);
-    }
-    return { destDomain: dest.domain, destLabel: dest.domain };
+): Promise<{ destDir: string; destLabel: string }> {
+  if (dest.kind === "store") {
+    const store = (await listMemoryStores()).find((s) =>
+      s.dir === dest.storeId
+    );
+    if (!store) throw new Error(`No such memory store: ${dest.storeId}`);
+    return { destDir: store.dir, destLabel: store.dir };
   }
 
-  const projectDir = await resolveProjectDir(dest.dir);
+  const homes = await discoverHomes();
+  if (!homes.some((h) => h.tool === "claude" && h.dir === dest.home)) {
+    throw new Error(`Not a Claude Code config folder: ${dest.home}`);
+  }
+  const store = await storeForDir(await resolveProjectDir(dest.dir));
+  const shared = await sharedMemoryDir(dest.home);
   return {
-    destDomain: domainForProjectDir(projectDir),
-    destLabel: projectDir,
+    destDir: shared ?? `${dest.home}/projects/${store.domain}/memory`,
+    destLabel: store.root,
   };
 }
 
 /**
- * "Move" is fully deterministic — no LLM involved, no arbitrary write target.
- * It relocates a memory file as-is into another project's memory store, always
- * at the same ~/.claude/projects/<domain>/memory/ path every project already
- * uses, so the destination is only ever *which* store, never an arbitrary
- * filesystem location. Hoisting is just this with the destination defaulted to
- * a broad root (see settings.ts), so the memory applies across projects rather
- * than one narrow repo. Refuses outright if a same-named file already exists at
- * the destination, rather than silently overwriting it — collision is the only
- * failure mode, and it's caught before anything is touched.
+ * Records the store a memory came from as `metadata.movedFrom`, so undoing a
+ * move is moving it back. Works whatever shape the frontmatter has, adding a
+ * metadata block (or the frontmatter itself) when missing.
+ */
+export function stampMovedFrom(content: string, source: string): string {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/);
+  if (!match) {
+    return `---\nmetadata:\n  movedFrom: ${source}\n---\n\n${content}`;
+  }
+
+  const lines = match[1].split(/\r?\n/).filter((l) =>
+    !/^\s+movedFrom:/.test(l)
+  );
+  const meta = lines.findIndex((l) => /^metadata:\s*$/.test(l));
+  if (meta === -1) lines.push("metadata:", `  movedFrom: ${source}`);
+  else lines.splice(meta + 1, 0, `  movedFrom: ${source}`);
+
+  const frontmatter = `---\n${lines.join("\n")}\n---${match[2]}`;
+  return frontmatter + content.slice(match[0].length);
+}
+
+/**
+ * Relocates a memory file as-is into another project's store. Deterministic,
+ * no LLM; the destination only selects *which* store. A same-named file at
+ * the destination is refused before anything is touched.
  */
 export async function writeMovedMemory(
   memory: MigratableMemory,
-  sourceDomain: string,
+  sourceStoreId: string,
   dest: MoveDestination,
-): Promise<{ writtenPath: string; destDomain: string; destLabel: string }> {
+): Promise<{ writtenPath: string; destDir: string; destLabel: string }> {
   if (memory.filename === "MEMORY.md") {
     throw new Error(
       `Refusing to move the index file itself (${memory.filename}).`,
     );
   }
 
-  const home = Deno.env.get("HOME") ?? "";
-  const { destDomain, destLabel } = await resolveDestination(dest);
-
-  if (sourceDomain === destDomain) {
+  const { destDir, destLabel } = await resolveDestination(dest);
+  if (sourceStoreId === destDir) {
     throw new Error(`This memory already lives in ${destLabel}.`);
   }
 
-  const destDir = `${home}/.claude/projects/${destDomain}/memory`;
   const destPath = `${destDir}/${memory.filename}`;
 
   if (await pathExists(destPath)) {
@@ -245,16 +300,13 @@ export async function writeMovedMemory(
     );
   }
 
-  const rawContent = await Deno.readTextFile(memory.path);
-  // Traceability aid for reversibility: records where this came from, right
-  // in the file, so "undo" is just "read movedFrom and move it back."
-  const content = rawContent.replace(
-    /^(metadata:[ \t]*\r?\n)/m,
-    `$1  movedFrom: ${sourceDomain}\n`,
+  const content = stampMovedFrom(
+    await Deno.readTextFile(memory.path),
+    sourceStoreId,
   );
 
   await Deno.mkdir(destDir, { recursive: true });
   await Deno.writeTextFile(destPath, content);
 
-  return { writtenPath: destPath, destDomain, destLabel };
+  return { writtenPath: destPath, destDir, destLabel };
 }

@@ -7,7 +7,7 @@
   </head>
   <body>
     <header id="topbar">
-      <nav id="breadcrumb"><span data-domain="">All domains</span></nav>
+      <nav id="breadcrumb"><span>~</span></nav>
       <div id="legend">
         <span class="legend-label">recency</span>
         <span id="legend-gradient"></span>
@@ -15,16 +15,19 @@
         <span id="legend-swatch-low" class="legend-swatch"></span>
         <span id="legend-swatch-high" class="legend-swatch"></span>
         <span class="legend-label">new</span>
+        <span
+          class="legend-invalid"
+          title="A store with stores inside its folder: its memories never reach them"
+        ></span>
+        <span class="legend-label">invalid</span>
       </div>
-      <button id="settings-btn" title="Settings">⚙</button>
-      <button id="refresh-btn" title="Rescan memory store">⟳</button>
+      <button id="refresh-btn" title="Rescan memory stores">⟳</button>
     </header>
 
     <main id="treemap"></main>
 
-    <div id="empty-state" class="hidden">
-    No memory files found under <code>~/.claude/projects/*/memory/</code>.
-  </div>
+    <div id="empty-state"
+      class="hidden">No memories found on this machine.</div>
 
     <aside id="detail" class="hidden">
       <button id="close-detail" aria-label="Close">×</button>
@@ -32,11 +35,20 @@
       <h2 id="detail-name"></h2>
       <div id="detail-meta"></div>
       <pre id="detail-content"></pre>
+      <div id="detail-wiring" class="hidden">
+        <div id="detail-wiring-text"></div>
+        <button id="repair-btn" class="hidden">Fix links</button>
+      </div>
       <div id="detail-actions">
         <button id="reveal-btn">Reveal in Finder</button>
         <button id="open-btn">Open</button>
         <button id="integrate-btn">Integrate into repo</button>
-        <button id="hoist-btn">Hoist</button>
+        <button
+          id="hoist-btn"
+          title="Move this up to ~, where every coding agent follows it in every project"
+        >
+          Hoist
+        </button>
         <button id="move-btn">Move to…</button>
         <button id="delete-btn" class="danger">Delete</button>
       </div>
@@ -44,19 +56,38 @@
       <div id="action-status">
         <span id="action-spinner" class="spinner hidden"></span>
         <span id="action-status-text"></span>
+        <button id="undo-btn" class="hidden">Undo</button>
       </div>
 
       <div id="integrate-panel" class="hidden">
         <div id="integrate-proposal-target"></div>
         <div id="integrate-proposal-summary"></div>
+        <div id="integrate-proposal-also" class="hidden"></div>
         <pre id="integrate-proposal-content"></pre>
         <p id="integrate-proposal-note">
-        Writing only touches the file above. Once it's written, you'll be
-        asked whether to delete the original memory too.
-      </p>
+          Writing only touches the file(s) named above. Once written, you'll be
+          asked whether to delete the original memory too.
+        </p>
         <div id="integrate-proposal-actions">
           <button id="integrate-apply-btn">Write to file</button>
           <button id="integrate-discard-btn">Discard</button>
+        </div>
+      </div>
+
+      <div id="hoist-panel" class="hidden">
+        <p id="hoist-note">
+          Hoisting moves this memory up to ~, the one instructions file every
+          coding agent reads in every project. This time it also points your
+          agents at that file:
+        </p>
+        <div id="hoist-problems" class="hidden"></div>
+        <details id="hoist-details">
+          <summary id="hoist-files-summary"></summary>
+          <ul id="hoist-files"></ul>
+        </details>
+        <div id="hoist-actions">
+          <button id="hoist-confirm-btn">Hoist</button>
+          <button id="hoist-cancel-btn">Cancel</button>
         </div>
       </div>
 
@@ -72,42 +103,17 @@
           placeholder="/Users/you/some/project"
         />
         <p id="move-note">
-        Relocates the file into that project's memory store, updating the
-        <code>MEMORY.md</code> index at both ends. Refuses if a memory of the
-        same name is already there.
-      </p>
+          Relocates the file into that project's memory store, updating the
+          <code>MEMORY.md</code> index at both ends. A store loads only in its
+          own repo (or, outside a repo, only in sessions started in exactly that
+          folder), so moving never widens a memory's reach — use Hoist for that.
+        </p>
         <div id="move-actions">
           <button id="move-confirm-btn">Move</button>
           <button id="move-cancel-btn">Cancel</button>
         </div>
       </div>
     </aside>
-
-    <div id="settings-overlay" class="hidden">
-      <div id="settings-dialog">
-        <h2>Settings</h2>
-        <label class="field-label" for="settings-hoist-dir">
-        Default hoist directory
-      </label>
-        <input
-          id="settings-hoist-dir"
-          type="text"
-          spellcheck="false"
-          autocapitalize="off"
-          placeholder="~"
-        />
-        <p class="settings-hint">
-        The project directory the one-click <strong>Hoist</strong> button moves a
-        memory into — use a broad root so hoisted memories apply across projects.
-        Its store lives at <code>~/.claude/projects/&lt;escaped-path&gt;/memory/</code>.
-      </p>
-        <div id="settings-status"></div>
-        <div id="settings-actions">
-          <button id="settings-save-btn">Save</button>
-          <button id="settings-cancel-btn">Cancel</button>
-        </div>
-      </div>
-    </div>
 
     <script type="module" src="/treemap.js"></script>
   </body>

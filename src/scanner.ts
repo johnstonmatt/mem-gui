@@ -1,10 +1,21 @@
-import type { Domain, MemoryFile } from "./types.ts";
+import type { Domain, MemoryFile, StoreScope } from "./types.ts";
+import {
+  contractHome,
+  domainForProjectDir,
+  findRepoRoot,
+  isRepoRoot,
+  realPathForDomain,
+} from "./paths.ts";
+import {
+  listMemoryStores,
+  type MemoryStore,
+  sharedMemoryDir,
+} from "./homes.ts";
+import { parseShared, planWiring, sharedFilePath } from "./hoist.ts";
 
 /**
- * Claude Code names each project's memory dir after the escaped cwd
- * (e.g. "-Users-m-dev-johnstonmatt-mem-gui"), and that mapping back to a
- * real path is lossy (original dashes vs. path-separator dashes are
- * indistinguishable) — used only as a last-resort fallback below.
+ * Last-resort label when neither a transcript nor the filesystem can name the
+ * directory: lossy, since original dashes and separators look the same.
  */
 function prettifyDomain(dir: string): string {
   return dir.startsWith("-") ? dir.replace(/-/g, "/") : dir;
@@ -65,26 +76,88 @@ async function readCwdFromTranscript(path: string): Promise<string | null> {
 }
 
 /**
- * Resolves a project domain dir (e.g. "-Users-m-dev-johnstonmatt-mem-gui")
- * to its real absolute path by reading the "cwd" field out of one of its
- * session transcripts — far more reliable than reversing the dash-escaping.
- * Falls back to the lossy heuristic if no transcript yields a cwd.
+ * Resolves a store name to the directory it belongs to. A transcript's cwd can
+ * be a subdirectory of the repo the store is keyed by, so it's mapped to its
+ * repo root and accepted only if that escapes back to this exact name.
  */
 async function resolveDomainPath(
   projectsDir: string,
   domain: string,
-): Promise<string> {
+): Promise<{ path: string; found: boolean }> {
   const domainDir = `${projectsDir}/${domain}`;
   try {
     for await (const entry of Deno.readDir(domainDir)) {
       if (!entry.isFile || !entry.name.endsWith(".jsonl")) continue;
       const cwd = await readCwdFromTranscript(`${domainDir}/${entry.name}`);
-      if (cwd) return cwd;
+      if (!cwd) continue;
+      const root = await findRepoRoot(cwd) ?? cwd;
+      if (domainForProjectDir(root) === domain) {
+        return { path: root, found: true };
+      }
+      if (domainForProjectDir(cwd) === domain) {
+        return { path: cwd, found: true };
+      }
     }
   } catch {
-    // fall through to heuristic
+    // fall through to the filesystem search
   }
-  return prettifyDomain(domain);
+  const real = await realPathForDomain(domain);
+  return real
+    ? { path: real, found: true }
+    : { path: prettifyDomain(domain), found: false };
+}
+
+async function isDir(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
+/** Names the directory a store belongs to, and where its memories load. */
+async function describeStore(
+  store: MemoryStore,
+  shared: string | null,
+): Promise<{ dir: string; label: string; scope: StoreScope }> {
+  if (store.project === null) {
+    return { dir: "", label: contractHome(store.dir), scope: "everywhere" };
+  }
+  // CLAUDE_CODE_PROJECT_DIR_NAME picks names that aren't escaped paths.
+  if (!store.project.startsWith("-")) {
+    return {
+      dir: "",
+      label: store.project,
+      scope: shared ? "overridden" : "named",
+    };
+  }
+
+  const resolved = await resolveDomainPath(
+    `${store.home}/projects`,
+    store.project,
+  );
+  const scope: StoreScope = shared
+    ? "overridden"
+    : !resolved.found || !await isDir(resolved.path)
+    ? "orphaned"
+    : await isRepoRoot(resolved.path)
+    ? "repo"
+    : "dir";
+  return {
+    dir: resolved.path,
+    label: folderLabel(resolved.path, scope),
+    scope,
+  };
+}
+
+/**
+ * Folders read as `~/…`. Plain "~" is the hoisted instructions every agent
+ * shares, so a store Claude keeps for the home folder itself says what it is.
+ */
+function folderLabel(path: string, scope: StoreScope): string {
+  const label = contractHome(path);
+  if (label !== "~") return label;
+  return scope === "repo" ? "~ · repo store" : "~ · sessions started here";
 }
 
 interface Frontmatter {
@@ -130,7 +203,7 @@ function estimateTokens(text: string): number {
 
 async function scanMemoryDir(
   memoryDir: string,
-  domain: string,
+  dir: string,
   domainLabel: string,
 ): Promise<MemoryFile[]> {
   const files: MemoryFile[] = [];
@@ -152,12 +225,14 @@ async function scanMemoryDir(
     files.push({
       path: fullPath,
       filename: entry.name,
-      domain,
+      storeId: memoryDir,
+      dir,
       domainLabel,
       name: (attrs.name as string) ?? entry.name.replace(/\.md$/, ""),
       description: (attrs.description as string) ??
         (isIndex ? "Memory index" : ""),
-      type: (metadata.type as string) ?? (isIndex ? "index" : "unknown"),
+      type: (metadata.type as string) ?? (attrs.type as string) ??
+        (isIndex ? "index" : "unknown"),
       isIndex,
       chars: content.length,
       tokens: estimateTokens(content),
@@ -168,52 +243,94 @@ async function scanMemoryDir(
   return files;
 }
 
+/** The hoisted instructions every agent shares, as one group of tiles. */
+async function scanShared(): Promise<Domain | null> {
+  const path = sharedFilePath();
+  let text: string;
+  let mtime: number;
+  try {
+    text = await Deno.readTextFile(path);
+    mtime = (await Deno.stat(path)).mtime?.getTime() ?? 0;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return null;
+    throw error;
+  }
+
+  const { sections, rest } = parseShared(text);
+  const items = rest
+    ? [...sections, { id: "", name: "Other shared instructions", text: rest }]
+    : sections;
+  if (items.length === 0) return null;
+
+  const label = "~";
+  const files: MemoryFile[] = items.map((item) => ({
+    path,
+    filename: item.id || "AGENTS.md",
+    storeId: path,
+    dir: "",
+    domainLabel: label,
+    name: item.name,
+    description: contractHome(path),
+    type: "shared",
+    isIndex: false,
+    chars: item.text.length,
+    tokens: estimateTokens(item.text),
+    mtime,
+    section: item.id,
+    content: item.text,
+  }));
+
+  const wiring = await planWiring();
+  return {
+    id: path,
+    home: "",
+    homeLabel: "",
+    dir: "",
+    domainLabel: label,
+    scope: "shared",
+    wiring: {
+      pending: wiring.steps.map((s) => s.display),
+      blocked: wiring.blocked,
+      warnings: wiring.warnings,
+    },
+    files,
+    totalTokens: files.reduce((sum, f) => sum + f.tokens, 0),
+  };
+}
+
 export async function scanDomains(): Promise<Domain[]> {
   const home = Deno.env.get("HOME");
   if (!home) return [];
 
-  const projectsDir = `${home}/.claude/projects`;
   const domains: Domain[] = [];
+  const sharedByHome = new Map<string, string | null>();
 
-  // Only a missing directory is the normal "nothing here yet" case — a fresh
-  // machine that has never run Claude Code. Anything else is a real fault and
-  // has to surface: a bare `catch { return [] }` here turned a mis-scoped
-  // permission grant in the v0.1.1 release build into a window that opened
-  // cleanly and showed nothing, with no hint anywhere as to why.
-  try {
-    await Deno.stat(projectsDir);
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return [];
-    throw error;
-  }
-
-  for await (const entry of Deno.readDir(projectsDir)) {
-    if (!entry.isDirectory) continue;
-    const memoryDir = `${projectsDir}/${entry.name}/memory`;
-
-    // Same rule per project: a project with no memory/ dir is ordinary and gets
-    // skipped, but a permission fault must not be mistaken for one — that would
-    // silently drop domains from the treemap.
-    try {
-      const stat = await Deno.stat(memoryDir);
-      if (!stat.isDirectory) continue;
-    } catch (error) {
-      if (error instanceof Deno.errors.NotFound) continue;
-      throw error;
+  for (const store of await listMemoryStores()) {
+    if (!sharedByHome.has(store.home)) {
+      sharedByHome.set(store.home, await sharedMemoryDir(store.home));
     }
-
-    const domainLabel = await resolveDomainPath(projectsDir, entry.name);
-    const files = await scanMemoryDir(memoryDir, entry.name, domainLabel);
+    const { dir, label, scope } = await describeStore(
+      store,
+      sharedByHome.get(store.home) ?? null,
+    );
+    const files = await scanMemoryDir(store.dir, dir, label);
     if (files.length === 0) continue;
 
     domains.push({
-      domain: entry.name,
-      domainLabel,
+      id: store.dir,
+      home: store.home,
+      homeLabel: store.home === `${home}/.claude`
+        ? ""
+        : contractHome(store.home),
+      dir,
+      domainLabel: label,
+      scope,
       files,
       totalTokens: files.reduce((sum, f) => sum + f.tokens, 0),
     });
   }
 
   domains.sort((a, b) => b.totalTokens - a.totalTokens);
-  return domains;
+  const shared = await scanShared();
+  return shared ? [shared, ...domains] : domains;
 }
