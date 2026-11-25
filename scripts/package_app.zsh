@@ -19,29 +19,23 @@ if [[ $IDENTITY != "-" ]]; then
     scripts/set_codesign_identity.ts "$IDENTITY"
 fi
 
-rm -rf "$APP" "$APP.app"
+rm -rf "$APP"
 deno task build:mac
-# deno 2.9.8 appends .app to --output even when it already ends in .app.
-if [[ -d "$APP.app" ]]; then mv "$APP.app" "$APP"; fi
-[[ -d $APP ]] || { print -u2 "deno desktop produced no $APP."; exit 1; }
-
-# deno desktop hardcodes CFBundleShortVersionString to "1.0". The updater reads
-# this to check what it downloaded, and Finder shows it in Get Info.
-VERSION="$(sed -nE 's/^[[:space:]]*"version": "([^"]+)".*/\1/p' deno.jsonc)"
-[[ -n $VERSION ]] || { print -u2 "No version in deno.jsonc."; exit 1; }
-plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
-plutil -replace CFBundleVersion -string "$VERSION" "$APP/Contents/Info.plist"
+# build:mac's --output relies on deno appending ".app"; if that changes, the
+# bundle lands elsewhere and every step after this one would miss it.
+[[ -d $APP ]] || { print -u2 "deno desktop produced no $APP. Found: $(ls dist)"; exit 1; }
 
 # Ships with the app so the updater installs a release with that release's own
 # install steps.
 cp scripts/install.zsh "$APP/Contents/Resources/install.zsh"
 
-# Re-sign the bundle so CodeResources covers the finished tree: the edits
-# above, and the icon deno desktop copies in after it signs. No --deep: the
-# nested Mach-Os (laufey_webview, libruntime.dylib) keep their own signatures.
+# Re-sign the bundle so CodeResources covers install.zsh. No --deep: the
+# nested Mach-Os (laufey_webview, libruntime.dylib) keep deno's signatures.
 if [[ $IDENTITY != "-" ]]; then
-  # CFBundleExecutable is laufey_webview, the process that hosts V8, so this
-  # puts allow-jit where the Hardened Runtime checks for it.
+  # deno signs with the Hardened Runtime but attaches no entitlements to a
+  # webview app (denoland/deno#36421), and without allow-jit V8 can't reserve
+  # its CodeRange and aborts at launch. CFBundleExecutable is laufey_webview,
+  # the process that hosts V8, so signing the bundle puts it there.
   codesign --force --options runtime --timestamp \
     --entitlements .github/entitlements.plist --sign "$IDENTITY" "$APP"
 else
@@ -49,4 +43,4 @@ else
   # --timestamp needs a real identity.
   codesign --force --sign - "$APP"
 fi
-print "Built $APP ($VERSION)"
+print "Built $APP ($(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist"))"

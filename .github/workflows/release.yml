@@ -117,9 +117,15 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
+      # Pinned, not v2.x, so the toolchain that builds a release changes only
+      # when someone bumps this and re-checks the build against it: `deno
+      # desktop` has changed its output path and what it signs between patch
+      # releases. When bumping, check "Report signing state" for whether deno
+      # now attaches allow-jit itself; if it does, package_app.zsh can stop
+      # adding entitlements.
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.9.8
 
       # Test the exact commit being shipped before signing anything.
       - name: Checks
@@ -149,9 +155,9 @@ jobs:
 
           rm "$RUNNER_TEMP/cert.p12"
 
-      # Builds, writes the version into Info.plist, adds the installer the
-      # in-app updater runs, and re-signs the bundle with the Hardened Runtime,
-      # a secure timestamp and .github/entitlements.plist.
+      # Builds, adds the installer the in-app updater runs, and re-signs the
+      # bundle with the Hardened Runtime, a secure timestamp and
+      # .github/entitlements.plist.
       - name: Build and sign
         env:
           CODESIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
@@ -189,7 +195,8 @@ jobs:
       # timestamp or entitlements went missing rather than the credentials.
       - name: Report signing state
         run: |
-          for target in "$APP" "$APP/Contents/MacOS/laufey_webview"; do
+          for target in "$APP" "$APP/Contents/MacOS/laufey_webview" \
+            "$APP/Contents/MacOS/libruntime.dylib"; do
             echo "── $target"
             codesign -dvvv "$target" 2>&1 | grep -E "^(CodeDirectory|Identifier|TeamIdentifier|Timestamp|Authority)" || true
             codesign -d --entitlements - --xml "$target" 2>/dev/null || true

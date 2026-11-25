@@ -228,9 +228,9 @@ deno task install       # build, then install to /Applications
 ```
 
 `package:mac` runs `scripts/package_app.zsh`: `deno desktop` builds the app
-(`deno task build:mac`), then the script writes the version into `Info.plist`,
-adds the installer the updater runs, and re-signs the bundle. Set
-`CODESIGN_IDENTITY` to a Developer ID to sign it as a release is signed.
+(`deno task build:mac`), then the script adds the installer the updater runs and
+re-signs the bundle. Set `CODESIGN_IDENTITY` to a Developer ID to sign it as a
+release is signed.
 
 ### Checks
 
